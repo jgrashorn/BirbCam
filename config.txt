@@ -1,5 +1,5 @@
 {
-    "serverIP": "192.168.178.83",
+    "serverIP": "192.168.178.38",
 	"filePort": 8080,
 	"streamPort": 8081,
 	

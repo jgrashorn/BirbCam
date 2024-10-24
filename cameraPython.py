@@ -104,7 +104,7 @@ while True:
     if mse > mseSensitivity or np.sum(diffComp) > pixelThreshold:
         
         if not encoding:
-            fname = f'{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
+            fname = f'Videos/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
             #mp4Output.output_filename = fname
             mp4Output.fileoutput = fname
             mp4Output.start()
