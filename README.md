@@ -2,7 +2,7 @@ Python script for a bird camera with automatic movement detection, recording and
 
 # Useful
 
-## Install pycamera2
+## Install picamera2
 https://pypi.org/project/picamera2/
 
 ## picamera2 in virtual environment
