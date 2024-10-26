@@ -18,9 +18,10 @@ NasFolderName = '' # placeholder if videos should be stored in some other folder
 lsize = (320, 240)
 msize = (config["width"], config["height"])
 picam2 = Picamera2()
-video_config = picam2.create_video_configuration(main={"size": msize, "format": "RGB888"},
-                                                 lores={"size": lsize, "format": "YUV420"}
-                                                )
+video_config = picam2.create_video_configuration(main={"size": msize, "format": "YUV420"},
+                                                 lores={"size": lsize, "format": "YUV420"},
+                                                 controls={"ColourGains": (1.0, 1.325)}
+                                                 )
 # transforms if camera is not oriented right side up
 video_config["transform"] = libcamera.Transform(hflip=1, vflip=1)
 
@@ -97,7 +98,7 @@ while True:
             os.system(cmd)
             
             # some code to send video to network-server
-            
+
             #if not birdCamera.sendVideo(fname + '.mp4',config["serverIP"],config["filePort"]):
             #    failedToSend.append(fname)
             #    print("Failed to send file " + fname + '.mp4')
