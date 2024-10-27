@@ -3,12 +3,15 @@ import json
 import socket
 import os
 import struct
+import logging
 
 import io
 import logging
 import threading
 
 from picamera2.outputs import FileOutput
+
+logger = logging.getLogger(__name__)
 
 PAGE ="""\
             <html>
@@ -44,14 +47,14 @@ def send_file(sck: socket.socket, filename):
 
 def sendVideo(filename,ip,port):
     
-    print("Connecting to " + ip + " on port " + f"{port}")
-    print("Sending file "+ filename)
+    logger.info("Connecting to " + ip + " on port " + f"{port}")
+    logger.info("Sending file "+ filename)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
     # Connecting with Server 
     sock.connect((ip, port)) 
     
-    print("Connected!")
+    logger.info("Connected!")
     
     success = False
     try:
@@ -64,6 +67,6 @@ def sendVideo(filename,ip,port):
         success = True
   
     except IOError: 
-        print("IOError")
+        logger.warning("IOError")
                 
     return success
