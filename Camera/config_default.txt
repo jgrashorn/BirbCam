@@ -7,7 +7,7 @@
     "height": 972,
 	
 	"captureDelay": 5.0,
-	"maxRecordTime": 10.0,
+	"maxRecordTime": 120.0,
 	
 	"sensitivity": 10.0,
 	"stopSensitivity": 5.0,
@@ -15,4 +15,8 @@
 	"stopDetectionThreshold": 10.0,
 	"numPixelsThreshold": 100,
 	"stopNumPixelsThreshold": 50
+
+	"bwSwitchingSensitivity": 1500,
+	"clrSwitchingSensitivity": 1800,
+	"skippedFramesAfterChange": 10
 }
