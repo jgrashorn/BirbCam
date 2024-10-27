@@ -36,7 +36,7 @@ def main():
 
     # construct the argument parser and parse the arguments
     ap = argparse.ArgumentParser()
-    ap.add_argument("-m", "--model", type=str, default="frcnn-resnet",
+    ap.add_argument("-m", "--model", type=str, default="frcnn-mobilenet",
         choices=["frcnn-resnet", "frcnn-mobilenet", "retinanet"],
         help="name of the object detection model")
     ap.add_argument("-l", "--labels", type=str, default="coco_classes.pickle",
@@ -62,10 +62,10 @@ def main():
     }
     # load the model and set it to evaluation mode
     model = MODELS[args["model"]](
-                                    weights=detection.FasterRCNN_ResNet50_FPN_Weights.COCO_V1,
+                                    weights=detection.FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.COCO_V1,
                                     progress=True,
                                     num_classes=len(CLASSES),
-                                    weights_backbone=torchvision.models.ResNet50_Weights.IMAGENET1K_V1
+                                    weights_backbone=torchvision.models.MobileNet_V3_Large_Weights.IMAGENET1K_V1
                                 ).to(DEVICE)
     
     model.eval()
