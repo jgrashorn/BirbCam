@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 def runCamera():
 
+    os.environ['PULSE_SERVER'] = "/run/user/1000/pulse/native"
+
     logging.basicConfig(
                         filename='birb.log',
                         format='%(asctime)s %(levelname)s %(module)s %(funcName)-8s %(message)s',
@@ -40,12 +42,15 @@ def runCamera():
     picam2.configure(video_config)
     encoder = H264Encoder(2000000)
 
-    streamOutput = FfmpegOutput(f'-r 30 -f mpegts udp://{config["serverIP"]}:{config["streamPort"]}?pkt_size=1316', audio=False)
+    streamOutput = FfmpegOutput(f'-r 30 -f mpegts udp://{config["serverIP"]}:{config["streamPort"]}?pkt_size=1316', audio=True, audio_device = 'default')
+    # streamOutput = FfmpegOutput(f'test.mp4', audio=True, audio_device = 'default')
     mp4Output = CircularOutput()
     encoder.output = [streamOutput,mp4Output]
     picam2.encoders = encoder
     picam2.start()
     picam2.start_encoder()
+
+    # streamOutput.stop()
 
     w, h = lsize
 
