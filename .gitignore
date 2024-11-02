@@ -1,5 +1,6 @@
 # other
-Videos/
+Videos/*
+Client/hls_output/*
 config.txt
 *.mp4
 
