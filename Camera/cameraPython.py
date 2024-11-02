@@ -42,7 +42,7 @@ def runCamera():
     picam2.configure(video_config)
     encoder = H264Encoder(2000000)
 
-    streamOutput = FfmpegOutput(f'-r 30 -f mpegts udp://{config["serverIP"]}:{config["streamPort"]}?pkt_size=1316', audio=True, audio_device = 'default')
+    streamOutput = FfmpegOutput(f'-r 30 -f mpegts udp://{config["serverIP"]}:{config["streamPort"]}?pkt_size=1316')
     # streamOutput = FfmpegOutput(f'test.mp4', audio=True, audio_device = 'default')
     # mp4Output = CircularOutput()
     encoder.output = [streamOutput]
