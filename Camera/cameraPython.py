@@ -26,9 +26,9 @@ def runCamera():
     
     config = birdCamera.readConfig()
 
-    NasFolderName = '' # placeholder if videos should be stored in some other folder (e.g. a NAS)
+    # NasFolderName = '' # placeholder if videos should be stored in some other folder (e.g. a NAS)
 
-    lsize = (320, 240) # size of internal preview for motion detection (smol bc fast)
+    # lsize = (320, 240) # size of internal preview for motion detection (smol bc fast)
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
 

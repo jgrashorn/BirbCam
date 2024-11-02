@@ -76,25 +76,25 @@ def start_server(host='0.0.0.0', port=65432):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((host, port))
     server_socket.listen(1)  # Listen for incoming connections, allowing 1 connection at a time
-    print(f"Server started and listening on {host}:{port}")
+    logger.info(f"Server started and listening on {host}:{port}")
 
     try:
         while True:
             # Accept a connection from the client
             client_socket, client_address = server_socket.accept()
-            print(f"Connected to client at {client_address}")
+            logger.info(f"Connected to client at {client_address}")
 
             # Receive data in chunks of 1024 bytes
             data = client_socket.recv(1024).decode('utf-8')
             if data:
-                print(f"Received command: {data}")
+                logger.info(f"Received command: {data}")
                 # You could add code here to handle different commands as needed
 
             # Close the client connection
             client_socket.close()
-            print("Connection closed")
+            logger.info("Connection closed")
     except KeyboardInterrupt:
-        print("Server shutting down.")
+        logger.info("Server shutting down.")
     finally:
         # Clean up the server socket
         server_socket.close()
