@@ -13,18 +13,6 @@ from picamera2.outputs import FileOutput
 
 logger = logging.getLogger(__name__)
 
-PAGE ="""\
-            <html>
-            <head>
-            <title>picamera2 MJPEG streaming demo</title>
-            </head>
-            <body>
-            <h1>Picamera2 MJPEG Streaming Demo</h1>
-            <img src="stream.mjpg" width="640" height="480" />
-            </body>
-            </html>
-            """
-
 def readConfig():
     with open("config.txt") as f:
         configData = f.read()
@@ -70,3 +58,23 @@ def sendVideo(filename,ip,port):
         logger.warning("IOError")
                 
     return success
+    
+def SendStartTrigger(ip, port):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((ip, port))
+         
+        sock.send(b"garten start\n")
+    except IOError:
+        logger.warning("IOError")
+         
+def SendStopTrigger(ip, port):
+     
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((ip, port))
+         
+        sock.send(b"garten stop\n")
+    except IOError:
+        logger.warning("IOError")
+     
