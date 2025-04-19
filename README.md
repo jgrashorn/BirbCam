@@ -3,7 +3,7 @@ After trying for weeks with ffmpeg, libcamera, picamera, frigate and whatever el
 
 # Client (Camera)
 
-Client streams video and audio via an ffmpeg rtsp stream to the server. Also checks for motion on a 
+Client streams video and audio via an ffmpeg rtsp stream to the server. Also checks for motion and sends a TCP message whenever something is detected.
 
 ## Install picamera2
 https://pypi.org/project/picamera2/
