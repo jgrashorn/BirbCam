@@ -24,3 +24,8 @@ WorkingDirectory=</path/to/folder>/Camera/
 User=<username>
 ExecStart=</path/to/folder>/.venv/bin/python </path/to/folder>/Camera/cameraPython.py
 ```
+
+## mediamtx
+```
+https://github.com/bluenviron/mediamtx
+```
