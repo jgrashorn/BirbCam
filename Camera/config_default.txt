@@ -1,6 +1,6 @@
 {
 	"serverIP": "192.168.178.67",
-	"filePort": 8080,
+	"port": 5005,
 	
     	"width": 1296,
     	"height": 972,
