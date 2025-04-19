@@ -1,10 +1,9 @@
 {
-    "serverIP": "192.168.178.67",
+	"serverIP": "192.168.178.67",
 	"filePort": 8080,
-	"streamPort": 8081,
 	
-    "width": 1296,
-    "height": 972,
+    	"width": 1296,
+    	"height": 972,
 	
 	"captureDelay": 5.0,
 	"maxRecordTime": 120.0,
@@ -14,7 +13,7 @@
 	"detectionThreshold": 15.0,
 	"stopDetectionThreshold": 10.0,
 	"numPixelsThreshold": 100,
-	"stopNumPixelsThreshold": 50
+	"stopNumPixelsThreshold": 50,
 
 	"bwSwitchingSensitivity": 1500,
 	"clrSwitchingSensitivity": 1800,
