@@ -27,7 +27,7 @@ def runCamera():
     config = birdCamera.readConfig()
 
     NasFolderName = '' # placeholder if videos should be stored in some other folder (e.g. a NAS)
-
+    
     lsize = (320, 240) # size of internal preview for motion detection (smol bc fast)
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
@@ -42,13 +42,18 @@ def runCamera():
     picam2.configure(video_config)
     encoder = H264Encoder(2000000)
 
-    streamOutput = FfmpegOutput(f'-r 30 -f mpegts udp://{config["serverIP"]}:{config["streamPort"]}?pkt_size=1316', audio=True, audio_device = 'default')
-    # streamOutput = FfmpegOutput(f'test.mp4', audio=True, audio_device = 'default')
-    mp4Output = CircularOutput()
-    encoder.output = [streamOutput,mp4Output]
+    #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
+    #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
+    streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://192.168.178.36:8554/garten",audio=True, audio_codec="aac", audio_sync=-0.3)
+    # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
+    # mp4Output = CircularOutput()
+    # encoder.output = [streamOutput,mp4Output]
+    encoder.output = streamOutput
     picam2.encoders = encoder
     picam2.start()
     picam2.start_encoder()
+    
+    ltime = time.time()
 
     # streamOutput.stop()
 
@@ -58,9 +63,9 @@ def runCamera():
 
     ltime = 0
     starttime = 0
-    fname = ""
+    # fname = ""
 
-    failedToSend = []
+    # failedToSend = []
 
     prev = picam2.capture_buffer("lores")
     prev = prev[:w * h].reshape(h, w).astype(np.int16)
@@ -110,11 +115,9 @@ def runCamera():
             if mse > mseSensitivity or np.sum(diffComp) > pixelThreshold:
                 
                 if not encoding:
+                    birdCamera.SendStartTrigger(config["serverIP"],config["port"])
                     logger.info("Started recording.")
                     logger.info( f"New Motion, mse: {mse:5.2f}, diffSum: {np.sum(diffComp):.0f}" )
-                    fname = f'Videos/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
-                    mp4Output.fileoutput = fname
-                    mp4Output.start()
                     
                     # change thresholds for stopping
                     mseSensitivity = config["stopSensitivity"]
@@ -129,7 +132,7 @@ def runCamera():
             else:
                 if encoding and ((time.time() - ltime > config["captureDelay"]) or (time.time() - starttime > config["maxRecordTime"])):
 
-                    mp4Output.stop()
+                    birdCamera.SendStopTrigger(config["serverIP"],config["port"])
                     encoding = False
                     logger.info("Stopped.")
                     
@@ -137,22 +140,6 @@ def runCamera():
                     mseSensitivity = config["sensitivity"]
                     pixelThreshold = config["numPixelsThreshold"]
                     detectionThreshold = config["detectionThreshold"]
-                    
-                    cmd = 'ffmpeg -nostats -loglevel 0 -r 30 -i ' + fname + ' -c copy ' + NasFolderName + fname +'.mp4'
-                    os.system(cmd)
-                    
-                    cmd ='rm ' + fname
-                    os.system(cmd)
-                    
-                    # some code to send video to network-server
-                    #if not birdCamera.sendVideo(fname + '.mp4',config["serverIP"],config["filePort"]):
-                    #    failedToSend.append(fname)
-                    #    print("Failed to send file " + fname + '.mp4')
-                    #else:
-                    #    print("Sent!")
-                    #    cmd ='rm ' + fname + '.mp4'
-                    #    os.system(cmd)
-                    #    fname = ""
    
         prev = cur # overwrite previous frame with current one
 
