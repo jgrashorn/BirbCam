@@ -1,9 +1,11 @@
 {
-	"serverIP": "192.168.178.67",
+    "serverIP": "192.168.178.38",
 	"port": 5005,
+	"name": "garten",
+	"rtspPort": 8554,
 	
-    	"width": 1296,
-    	"height": 972,
+    "width": 1920,
+    "height": 1080,
 	
 	"captureDelay": 5.0,
 	"maxRecordTime": 120.0,
