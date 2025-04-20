@@ -25,8 +25,6 @@ def runCamera():
                         datefmt='%Y-%m-%d %H:%M:%S')
     
     config = birdCamera.readConfig()
-
-    NasFolderName = '' # placeholder if videos should be stored in some other folder (e.g. a NAS)
     
     lsize = (320, 240) # size of internal preview for motion detection (smol bc fast)
     msize = (config["width"], config["height"]) # size of recording from config.txt
@@ -44,7 +42,7 @@ def runCamera():
 
     #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
     #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
-    streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://192.168.178.36:8554/garten",audio=True, audio_codec="aac", audio_sync=-0.3)
+    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport udp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=-0.3)
     # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
     # mp4Output = CircularOutput()
     # encoder.output = [streamOutput,mp4Output]

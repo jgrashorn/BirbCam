@@ -77,4 +77,8 @@ def SendStopTrigger(ip, port):
         sock.send(b"garten stop\n")
     except IOError:
         logger.warning("IOError")
+<<<<<<< HEAD
      
+=======
+     
+>>>>>>> 03d5fc44a9db5ab76be4e46e48d5871b4f28b69a
