@@ -4,18 +4,32 @@
   <title>Recordings - {{ cam }}</title>
 </head>
 <body>
-  <h1>📼 Recordings for {{ cam }}</h1>
-  <ul>
-    {% for file in files %}
-      <li>
-        <a href="{{ url_for('serve_recording', cam=cam, filename=file) }}">{{ file }}</a>
-        <br>
-        <video width="480" controls>
-          <source src="{{ url_for('serve_recording', cam=cam, filename=file) }}" type="video/mp4">
-        </video>
-      </li>
-    {% endfor %}
-  </ul>
-  <p><a href="/">⬅ Back to dashboard</a></p>
+  {% extends "base.html" %}
+
+  {% block title %}Recordings · {{ cam }} · BirbCam{% endblock %}
+
+  {% block content %}
+    <h1 class="section-title">📼 Recordings for {{ cam }}</h1>
+    {% if files and files|length %}
+      <ul class="list">
+        {% for file in files %}
+          <li class="stack">
+            <div class="row">
+              <a class="btn btn--primary" href="{{ url_for('serve_recording', cam=cam, filename=file) }}">⬇ Download</a>
+              <span class="muted">{{ file }}</span>
+            </div>
+            <video class="thumb" controls preload="metadata">
+              <source src="{{ url_for('serve_recording', cam=cam, filename=file) }}" type="video/mp4">
+            </video>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">No recordings yet.</p>
+    {% endif %}
+    <div class="row" style="margin-top:10px">
+      <a class="btn" href="/">⬅ Back to dashboard</a>
+    </div>
+  {% endblock %}
 </body>
 </html>

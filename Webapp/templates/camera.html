@@ -1,13 +1,82 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Viewing {{ name }}</title>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  {% block title %}Viewing {{ name }} · BirbCam{% endblock %}
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* Light/Dark mode (no JS needed) */
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #1f2328;
+      --border: #d0d7de;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --surface: #0e1420;
+        --text: #e6edf3;
+        --border: #273242;
+      }
+    }
+    /* Layout + responsive player */
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+    }
+    .container {
+      width: min(1100px, 92vw);
+      margin: 0 auto;
+      padding: 16px;
+    }
+    .section-title { margin: 12px 0 8px; font-size: 18px; }
+    .player {
+      margin-top: 8px;
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px;
+    }
+    .player video {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: calc(100vh - 180px); /* keep smaller than viewport */
+      object-fit: contain;
+      background: #000;
+      border-radius: 8px;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      display: inline-block;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+  </style>
+  {% block head %}
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  {% endblock %}
 </head>
 <body>
-  <h1>Live View: {{ name }}</h1>
-  <video id="video" controls autoplay muted playsinline></video>
+  {% block content %}
+  <div class="container">
+    <h1 class="section-title">Live View: {{ name }}</h1>
+    <div class="player">
+      <video id="video" controls autoplay muted playsinline></video>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <a class="btn" href="/">⬅ Back to dashboard</a>
+    </div>
+  </div>
+  {% endblock %}
 
+  {% block scripts %}
   <script>
     const url = "{{ stream_url }}";
     const video = document.getElementById('video');
@@ -19,9 +88,13 @@
         hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
+          // keep your working DVR behavior (no counts mixed in)
           liveSyncDuration: 3,
-          liveMaxLatencyDuration: 10,
-          maxBufferLength: 10,
+          liveMaxLatencyDuration: 3600,
+          liveSyncDurationCount: undefined,
+          liveMaxLatencyDurationCount: undefined,
+          maxLiveSyncPlaybackRate: 1.0,
+          maxBufferLength: 30,
           manifestLoadingMaxRetry: 10,
           fragLoadingMaxRetry: 10,
           manifestLoadingRetryDelay: 1000,
@@ -31,13 +104,9 @@
         hls.attachMedia(video);
         hls.on(Hls.Events.ERROR, function (event, data) {
           if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              hls.startLoad();
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
-              setTimeout(attach, 1000);
-            }
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+            else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+            else setTimeout(attach, 1000);
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -55,8 +124,7 @@
       }
     }, 5000);
   </script>
-
-  <p><a href="/">⬅ Back to dashboard</a></p>
+  {% endblock %}
 </body>
 </html>
 
