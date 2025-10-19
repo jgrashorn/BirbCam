@@ -3,6 +3,7 @@ import os
 import logging
 import socket
 import threading
+import subprocess  # NEW
 
 import numpy as np
 
@@ -53,24 +54,57 @@ def runCamera():
     streamOutput = None
     streaming = {"running": False}
 
+    def _get_ffmpeg_proc(out):
+        # Picamera2 FfmpegOutput stores the Popen in different attrs across versions
+        for name in ("process", "proc", "_process", "_ffmpeg", "_proc"):
+            p = getattr(out, name, None)
+            if p is not None:
+                return p
+        return None
+
+    def _ffmpeg_dead(out) -> bool:
+        if not out:
+            return True
+        p = _get_ffmpeg_proc(out)
+        try:
+            return (p is not None) and (p.poll() is not None)
+        except Exception:
+            return False
+
     def start_stream():
         nonlocal encoder, streamOutput
         try:
             logger.info("Starting RTSP encoder/output")
             enc = H264Encoder(2000000)
+            try:
+                enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
+            except Exception:
+                pass
             out = FfmpegOutput(
                 f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',
                 audio=True,
                 audio_codec="aac",
                 audio_sync=config["audioDelay"],
             )
-            enc.output = out
-            picam2.encoders = enc
-            # start encoder (camera itself starts below)
-            picam2.start_encoder()
+            # Prefer API with (encoder, output); fall back if needed
+            try:
+                Picamera2.start_encoder  # probe existence
+                picam2.start_encoder(enc, out)
+            except TypeError:
+                # older signatures
+                enc.output = out
+                picam2.start_encoder()
+            except AttributeError:
+                # very old API; use output assignment
+                enc.output = out
+                picam2.start_encoder()
+
             encoder = enc
             streamOutput = out
             streaming["running"] = True
+            proc = _get_ffmpeg_proc(out)
+            if proc:
+                logger.info(f"ffmpeg pid={getattr(proc,'pid',None)} started")
         except Exception as e:
             logger.error(f"Failed to start stream: {e}", exc_info=True)
             streaming["running"] = False
@@ -79,12 +113,10 @@ def runCamera():
         nonlocal encoder, streamOutput
         try:
             logger.info("Stopping RTSP encoder/output")
-            # stop encoder; ignore errors if already stopped
             try:
                 picam2.stop_encoder()
             except Exception:
                 pass
-            # best-effort close output/encoder
             try:
                 if hasattr(streamOutput, "stop"):
                     streamOutput.stop()
@@ -103,16 +135,18 @@ def runCamera():
     def stream_manager():
         host = config["serverIP"]
         port = config["rtspPort"]
-        was_up = False
         while True:
             up = _rtsp_up(host, port)
             with encoder_lock:
+                # If ffmpeg exited (Broken pipe or server-side EOF), restart
+                if streaming["running"] and _ffmpeg_dead(streamOutput):
+                    logger.warning("ffmpeg output exited; restarting stream")
+                    stop_stream()
                 if up and not streaming["running"]:
                     start_stream()
                 elif (not up) and streaming["running"]:
                     logger.warning("RTSP server down; stopping encoder to avoid broken pipe")
                     stop_stream()
-            was_up = up
             time.sleep(2)
 
     # Start camera and manager; encoder will start when RTSP is reachable
