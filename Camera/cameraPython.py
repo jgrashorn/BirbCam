@@ -42,7 +42,7 @@ def runCamera():
 
     #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
     #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
-    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport udp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
+    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
     # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
     # mp4Output = CircularOutput()
     # encoder.output = [streamOutput,mp4Output]
