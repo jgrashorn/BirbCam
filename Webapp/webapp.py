@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 # Define your available cameras and their HLS paths
 cameras = {
-    "garten": "http://192.168.178.36:8888/garten/index.m3u8"
+    "garten": "http://192.168.178.38:8888/garten/index.m3u8"
     # Add more cameras here
 }
 

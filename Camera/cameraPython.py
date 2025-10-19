@@ -26,13 +26,13 @@ def runCamera():
     
     config = birdCamera.readConfig()
     
-    lsize = (320, 240) # size of internal preview for motion detection (smol bc fast)
+    lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
 
     video_config = picam2.create_video_configuration(main={"size": msize, "format": "YUV420"}, # format of recording
                                                     lores={"size": lsize, "format": "YUV420"}, # format of preview
-                                                    controls={"ColourGains": (0.95, 1.325)} # color correction for IR-cams, (r, b)
+                                                    controls={"ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
                                                     )
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
@@ -42,7 +42,7 @@ def runCamera():
 
     #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
     #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
-    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport udp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=-0.3)
+    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport udp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
     # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
     # mp4Output = CircularOutput()
     # encoder.output = [streamOutput,mp4Output]
