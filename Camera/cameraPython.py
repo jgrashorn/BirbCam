@@ -56,18 +56,28 @@ def runCamera():
 
     rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
 
-    def _find_ffmpeg_pid(target_url):
+    # Replace pgrep with a /proc scan (more reliable, no shell)
+    def _find_ffmpeg_pid(target_url: str):
         try:
-            out = subprocess.check_output(["pgrep", "-af", "ffmpeg"], text=True)
-        except subprocess.CalledProcessError:
-            return None
-        for line in out.splitlines():
-            # line looks like: "<pid> ffmpeg ... rtsp://.../garten"
-            if target_url in line and "-f rtsp" in line:
+            for pid in os.listdir("/proc"):
+                if not pid.isdigit():
+                    continue
                 try:
-                    return int(line.split(None, 1)[0])
-                except Exception:
-                    pass
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        raw = f.read()
+                    if not raw:
+                        continue
+                    parts = raw.split(b"\x00")
+                    exe = parts[0].decode("utf-8", "ignore")
+                    if "ffmpeg" not in exe:
+                        continue
+                    cmd = " ".join(p.decode("utf-8", "ignore") for p in parts if p)
+                    if target_url in cmd:
+                        return int(pid)
+                except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                    continue
+        except Exception:
+            pass
         return None
 
     def _ffmpeg_dead() -> bool:
@@ -98,12 +108,12 @@ def runCamera():
                 picam2.start_encoder()
 
             # give ffmpeg a moment to spawn, then locate pid
-            time.sleep(0.3)
+            time.sleep(0.5)
             pid = _find_ffmpeg_pid(rtsp_url)
             if pid:
                 logger.info(f"ffmpeg pid={pid} started")
             else:
-                logger.warning("ffmpeg pid not found (will still monitor and restart if needed)")
+                logger.warning("ffmpeg pid not found (debounced monitor will verify liveness)")
 
             encoder = enc
             streamOutput = out
@@ -138,18 +148,41 @@ def runCamera():
     def stream_manager():
         host = config["serverIP"]
         port = config["rtspPort"]
+        dead_ticks = 0
+        down_ticks = 0
+        up_ticks = 0
+        DEAD_THRESH = 3   # require 3 consecutive misses (~6s) before restart
+        DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
+        UP_THRESH = 2     # require 2 consecutive successes before start
         while True:
             up = _rtsp_up(host, port)
             with encoder_lock:
-                # restart if ffmpeg died (e.g., Broken pipe / server EOF)
-                if streaming["running"] and _ffmpeg_dead():
-                    logger.warning("ffmpeg output gone; restarting stream")
-                    stop_stream()
-                if up and not streaming["running"]:
-                    start_stream()
-                elif (not up) and streaming["running"]:
-                    logger.warning("RTSP server down; stopping encoder to avoid broken pipe")
-                    stop_stream()
+                if streaming["running"]:
+                    if _ffmpeg_dead():
+                        dead_ticks += 1
+                        if dead_ticks >= DEAD_THRESH:
+                            logger.warning("ffmpeg missing for %d checks; restarting stream", dead_ticks)
+                            stop_stream()
+                            dead_ticks = 0
+                    else:
+                        dead_ticks = 0
+
+                if not up:
+                    down_ticks += 1
+                    up_ticks = 0
+                    if streaming["running"] and down_ticks >= DOWN_THRESH:
+                        logger.warning("RTSP not reachable for %d checks; stopping encoder", down_ticks)
+                        stop_stream()
+                        down_ticks = 0
+                else:
+                    down_ticks = 0
+                    if not streaming["running"]:
+                        up_ticks += 1
+                        if up_ticks >= UP_THRESH:
+                            start_stream()
+                            up_ticks = 0
+                    else:
+                        up_ticks = 0
             time.sleep(2)
 
     # Start camera and manager; encoder will start when RTSP is reachable

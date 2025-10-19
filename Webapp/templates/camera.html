@@ -72,6 +72,8 @@
     </div>
     <div class="row" style="margin-top:10px">
       <a class="btn" href="/">⬅ Back to dashboard</a>
+      <button id="save60" class="btn">💾 Save last 60s</button>
+      <span id="saveStatus" class="muted"></span>
     </div>
   </div>
   {% endblock %}
@@ -123,6 +125,30 @@
         last = video.currentTime;
       }
     }, 5000);
+
+    const saveBtn = document.getElementById('save60');
+    const saveStatus = document.getElementById('saveStatus');
+
+    async function saveLast(seconds=60) {
+      saveBtn.disabled = true;
+      saveStatus.textContent = `Saving last ${seconds}s...`;
+      try {
+        const res = await fetch("/api/clip", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ cam: "{{ name }}", seconds })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+        saveStatus.innerHTML = `Saved: <a href="${data.url}" class="btn">${data.filename}</a>`;
+      } catch (e) {
+        console.error(e);
+        saveStatus.textContent = `Error: ${e.message}`;
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+    saveBtn.addEventListener('click', () => saveLast(60));
   </script>
   {% endblock %}
 </body>
