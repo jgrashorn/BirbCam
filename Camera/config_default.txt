@@ -4,20 +4,24 @@
 	"name": "garten",
 	"rtspPort": 8554,
 	
-    "width": 1920,
-    "height": 1080,
+    "width": 1296,
+    "height": 972,
 	
 	"captureDelay": 5.0,
 	"maxRecordTime": 120.0,
 	
-	"sensitivity": 10.0,
-	"stopSensitivity": 5.0,
-	"detectionThreshold": 15.0,
-	"stopDetectionThreshold": 10.0,
-	"numPixelsThreshold": 100,
-	"stopNumPixelsThreshold": 50,
+	"sensitivity": 50.0,
+	"stopSensitivity": 30.0,
+	"detectionThreshold": 30.0,
+	"stopDetectionThreshold": 20.0,
+	"numPixelsThreshold": 150,
+	"stopNumPixelsThreshold": 100,
 
 	"bwSwitchingSensitivity": 1500,
 	"clrSwitchingSensitivity": 1800,
-	"skippedFramesAfterChange": 10
+	"skippedFramesAfterChange": 10,
+
+	"audioDelay": -0.3,
+	"colorOffset_red": 0.8,
+	"colorOffset_blue": 1.5
 }
