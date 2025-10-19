@@ -1,6 +1,8 @@
 import time
 import os
 import logging
+import socket
+import threading
 
 import numpy as np
 
@@ -12,6 +14,13 @@ import libcamera
 import birdCamera
 
 logger = logging.getLogger(__name__)
+
+def _rtsp_up(host, port, timeout=1.0):
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 def runCamera():
 
@@ -37,14 +46,78 @@ def runCamera():
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
     
     picam2.configure(video_config)
-    encoder = H264Encoder(2000000)
 
-    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
+    # --- self-healing RTSP publisher ---
+    encoder_lock = threading.Lock()
+    encoder = None
+    streamOutput = None
+    streaming = {"running": False}
 
-    encoder.output = streamOutput
-    picam2.encoders = encoder
+    def start_stream():
+        nonlocal encoder, streamOutput
+        try:
+            logger.info("Starting RTSP encoder/output")
+            enc = H264Encoder(2000000)
+            out = FfmpegOutput(
+                f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',
+                audio=True,
+                audio_codec="aac",
+                audio_sync=config["audioDelay"],
+            )
+            enc.output = out
+            picam2.encoders = enc
+            # start encoder (camera itself starts below)
+            picam2.start_encoder()
+            encoder = enc
+            streamOutput = out
+            streaming["running"] = True
+        except Exception as e:
+            logger.error(f"Failed to start stream: {e}", exc_info=True)
+            streaming["running"] = False
+
+    def stop_stream():
+        nonlocal encoder, streamOutput
+        try:
+            logger.info("Stopping RTSP encoder/output")
+            # stop encoder; ignore errors if already stopped
+            try:
+                picam2.stop_encoder()
+            except Exception:
+                pass
+            # best-effort close output/encoder
+            try:
+                if hasattr(streamOutput, "stop"):
+                    streamOutput.stop()
+            except Exception:
+                pass
+            try:
+                if hasattr(encoder, "close"):
+                    encoder.close()
+            except Exception:
+                pass
+        finally:
+            encoder = None
+            streamOutput = None
+            streaming["running"] = False
+
+    def stream_manager():
+        host = config["serverIP"]
+        port = config["rtspPort"]
+        was_up = False
+        while True:
+            up = _rtsp_up(host, port)
+            with encoder_lock:
+                if up and not streaming["running"]:
+                    start_stream()
+                elif (not up) and streaming["running"]:
+                    logger.warning("RTSP server down; stopping encoder to avoid broken pipe")
+                    stop_stream()
+            was_up = up
+            time.sleep(2)
+
+    # Start camera and manager; encoder will start when RTSP is reachable
     picam2.start()
-    picam2.start_encoder()
+    threading.Thread(target=stream_manager, daemon=True).start()
 
     w, h = lsize
 
