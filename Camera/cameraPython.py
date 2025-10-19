@@ -3,13 +3,13 @@ import os
 import logging
 import socket
 import threading
-import subprocess  # NEW
+import subprocess
 
 import numpy as np
 
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import CircularOutput, FfmpegOutput
+from picamera2.outputs import FfmpegOutput
 
 import libcamera
 import birdCamera
@@ -54,22 +54,24 @@ def runCamera():
     streamOutput = None
     streaming = {"running": False}
 
-    def _get_ffmpeg_proc(out):
-        # Picamera2 FfmpegOutput stores the Popen in different attrs across versions
-        for name in ("process", "proc", "_process", "_ffmpeg", "_proc"):
-            p = getattr(out, name, None)
-            if p is not None:
-                return p
+    rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+
+    def _find_ffmpeg_pid(target_url):
+        try:
+            out = subprocess.check_output(["pgrep", "-af", "ffmpeg"], text=True)
+        except subprocess.CalledProcessError:
+            return None
+        for line in out.splitlines():
+            # line looks like: "<pid> ffmpeg ... rtsp://.../garten"
+            if target_url in line and "-f rtsp" in line:
+                try:
+                    return int(line.split(None, 1)[0])
+                except Exception:
+                    pass
         return None
 
-    def _ffmpeg_dead(out) -> bool:
-        if not out:
-            return True
-        p = _get_ffmpeg_proc(out)
-        try:
-            return (p is not None) and (p.poll() is not None)
-        except Exception:
-            return False
+    def _ffmpeg_dead() -> bool:
+        return _find_ffmpeg_pid(rtsp_url) is None
 
     def start_stream():
         nonlocal encoder, streamOutput
@@ -81,30 +83,31 @@ def runCamera():
             except Exception:
                 pass
             out = FfmpegOutput(
-                f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',
-                audio=True,
-                audio_codec="aac",
-                audio_sync=config["audioDelay"],
+                f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                audio=True
             )
-            # Prefer API with (encoder, output); fall back if needed
+            # Start encoder with output
             try:
                 Picamera2.start_encoder  # probe existence
                 picam2.start_encoder(enc, out)
             except TypeError:
-                # older signatures
                 enc.output = out
                 picam2.start_encoder()
             except AttributeError:
-                # very old API; use output assignment
                 enc.output = out
                 picam2.start_encoder()
+
+            # give ffmpeg a moment to spawn, then locate pid
+            time.sleep(0.3)
+            pid = _find_ffmpeg_pid(rtsp_url)
+            if pid:
+                logger.info(f"ffmpeg pid={pid} started")
+            else:
+                logger.warning("ffmpeg pid not found (will still monitor and restart if needed)")
 
             encoder = enc
             streamOutput = out
             streaming["running"] = True
-            proc = _get_ffmpeg_proc(out)
-            if proc:
-                logger.info(f"ffmpeg pid={getattr(proc,'pid',None)} started")
         except Exception as e:
             logger.error(f"Failed to start stream: {e}", exc_info=True)
             streaming["running"] = False
@@ -138,9 +141,9 @@ def runCamera():
         while True:
             up = _rtsp_up(host, port)
             with encoder_lock:
-                # If ffmpeg exited (Broken pipe or server-side EOF), restart
-                if streaming["running"] and _ffmpeg_dead(streamOutput):
-                    logger.warning("ffmpeg output exited; restarting stream")
+                # restart if ffmpeg died (e.g., Broken pipe / server EOF)
+                if streaming["running"] and _ffmpeg_dead():
+                    logger.warning("ffmpeg output gone; restarting stream")
                     stop_stream()
                 if up and not streaming["running"]:
                     start_stream()
