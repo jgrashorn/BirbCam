@@ -1,5 +1,4 @@
 import time
-import datetime
 import os
 import logging
 
@@ -40,37 +39,17 @@ def runCamera():
     picam2.configure(video_config)
     encoder = H264Encoder(2000000)
 
-    #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
-    #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
     streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
-    # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
-    # mp4Output = CircularOutput()
-    # encoder.output = [streamOutput,mp4Output]
+
     encoder.output = streamOutput
     picam2.encoders = encoder
     picam2.start()
     picam2.start_encoder()
-    
-    ltime = time.time()
-
-    # streamOutput.stop()
 
     w, h = lsize
 
-    encoding = False
-
-    ltime = 0
-    starttime = 0
-    # fname = ""
-
-    # failedToSend = []
-
     prev = picam2.capture_buffer("lores")
     prev = prev[:w * h].reshape(h, w).astype(np.int16)
-
-    mseSensitivity = config["sensitivity"]
-    pixelThreshold = config["numPixelsThreshold"]
-    detectionThreshold = config["detectionThreshold"]
 
     bwMode = False # greyscale mode on/off
     currBrightness = 0
@@ -88,7 +67,6 @@ def runCamera():
         if skipNFrames > 0: 
             skipNFrames -= 1
 
-        # if no frames are skipped, do the thing
         else:
             # switch mode in case brightness reached threshold, then skip some frames
             if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
@@ -102,42 +80,6 @@ def runCamera():
                 picam2.set_controls({"Saturation": 0.0})
                 bwMode = True
                 skipNFrames = config["skippedFramesAfterChange"]
-
-            # measure pixels differences (mse) between current and previous frame
-            diff = np.subtract(cur, prev)
-            mse = np.square(diff).mean()
-
-            # measure individual pixel difference to detect local changes
-            diffComp = (np.abs(diff) > detectionThreshold) * np.ones(diff.shape)
-        
-            if mse > mseSensitivity or np.sum(diffComp) > pixelThreshold:
-                
-                if not encoding:
-                    birdCamera.SendStartTrigger(config["serverIP"],config["port"])
-                    logger.info("Started recording.")
-                    logger.info( f"New Motion, mse: {mse:5.2f}, diffSum: {np.sum(diffComp):.0f}" )
-                    
-                    # change thresholds for stopping
-                    mseSensitivity = config["stopSensitivity"]
-                    pixelThreshold = config["stopNumPixelsThreshold"]
-                    detectionThreshold = config["stopDetectionThreshold"]
-
-                    starttime = time.time()
-                    encoding = True
-                    
-                ltime = time.time()
-                
-            else:
-                if encoding and ((time.time() - ltime > config["captureDelay"]) or (time.time() - starttime > config["maxRecordTime"])):
-
-                    birdCamera.SendStopTrigger(config["serverIP"],config["port"])
-                    encoding = False
-                    logger.info("Stopped.")
-                    
-                    # change thresholds to starting values
-                    mseSensitivity = config["sensitivity"]
-                    pixelThreshold = config["numPixelsThreshold"]
-                    detectionThreshold = config["detectionThreshold"]
    
         prev = cur # overwrite previous frame with current one
 
