@@ -7,7 +7,7 @@ from datetime import datetime
 LISTEN_PORT = 5005
 RECORDINGS_DIR = "./recordings"
 CAMERA_STREAMS = {
-    "garten": "rtsp://localhost:8554/hqstream",
+    "garten": "rtsp://localhost:8554/garten",
     # Add more if needed
 }
 
@@ -33,7 +33,7 @@ def start_recording(camera_name):
         "-rtsp_transport", "tcp",
         "-i", stream_url,
         "-c:v", "copy",
-        "-c:a", "aac",
+        "-c:a", "copy",
         "-y",
         "-t", "3600",  # max duration, you’ll kill it early
         output_path

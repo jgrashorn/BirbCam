@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Viewing {{ name }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <h1>Live View: {{ name }}</h1>
+  <video id="video" controls autoplay muted playsinline></video>
+
+  <script>
+    const url = "{{ stream_url }}";
+    const video = document.getElementById('video');
+    let hls;
+
+    function attach() {
+      if (hls) { try { hls.destroy(); } catch(e) {} }
+      if (Hls.isSupported()) {
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          liveSyncDuration: 3,
+          liveMaxLatencyDuration: 10,
+          maxBufferLength: 10,
+          manifestLoadingMaxRetry: 10,
+          fragLoadingMaxRetry: 10,
+          manifestLoadingRetryDelay: 1000,
+          fragLoadingRetryDelay: 1000
+        });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+            } else {
+              setTimeout(attach, 1000);
+            }
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+      }
+    }
+    attach();
+
+    // Reload if stalled
+    let last = 0;
+    setInterval(() => {
+      if (!video.paused) {
+        if (video.currentTime === last) attach();
+        last = video.currentTime;
+      }
+    }, 5000);
+  </script>
+
+  <p><a href="/">⬅ Back to dashboard</a></p>
+</body>
+</html>
+

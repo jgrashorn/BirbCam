@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Recordings - {{ cam }}</title>
+</head>
+<body>
+  <h1>📼 Recordings for {{ cam }}</h1>
+  <ul>
+    {% for file in files %}
+      <li>
+        <a href="{{ url_for('serve_recording', cam=cam, filename=file) }}">{{ file }}</a>
+        <br>
+        <video width="480" controls>
+          <source src="{{ url_for('serve_recording', cam=cam, filename=file) }}" type="video/mp4">
+        </video>
+      </li>
+    {% endfor %}
+  </ul>
+  <p><a href="/">⬅ Back to dashboard</a></p>
+</body>
+</html>
