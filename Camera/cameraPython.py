@@ -41,31 +41,27 @@ AUDIO_CH = int(os.environ.get("BIRBCAM_AUDIO_CHANNELS", "1"))
 AUDIO_SR = int(os.environ.get("BIRBCAM_AUDIO_RATE", "48000"))
 
 def runCamera():
-    # Survive SSH logout (don’t SIGHUP children like ffmpeg)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)  # NEW
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
-    # Audio selection: prefer ALSA; disable audio if none
-    requested_dev = os.environ.get("BIRBCAM_AUDIO_DEV")  # e.g. "hw:1,0"
+    requested_dev = os.environ.get("BIRBCAM_AUDIO_DEV")  # e.g. "plughw:0,0"
     alsa_dev = requested_dev or _detect_alsa_device()
-    use_audio = os.environ.get("BIRBCAM_ENABLE_AUDIO", "1") not in ("0", "false", "False")
+    use_audio_default = os.environ.get("BIRBCAM_ENABLE_AUDIO", "1") not in ("0", "false", "False")
 
-    if alsa_dev and use_audio:
-        os.environ.pop("PULSE_SERVER", None)  # avoid Pulse session dependency
-        logging.getLogger(__name__).info(f"Using ALSA audio device: {alsa_dev}")
+    if alsa_dev and use_audio_default:
+        os.environ.pop("PULSE_SERVER", None)
+        logger.info(f"Using ALSA audio device: {alsa_dev}")
+    elif use_audio_default:
+        logger.warning("No ALSA capture device detected; will try audio, may fall back to video-only")
     else:
-        if not use_audio:
-            logging.getLogger(__name__).warning("Audio disabled by env (BIRBCAM_ENABLE_AUDIO=0)")
-        else:
-            logging.getLogger(__name__).warning("No ALSA capture device detected; disabling audio")
-        use_audio = False
-        # Optional: if you really want Pulse, set PULSE_SERVER here
+        logger.info("Audio disabled by env (BIRBCAM_ENABLE_AUDIO=0)")
 
     logging.basicConfig(
         filename='birb.log',
         format='%(asctime)s %(levelname)s %(module)s %(funcName)-8s %(message)s',
         level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
     config = birdCamera.readConfig()
     
     lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
@@ -85,12 +81,16 @@ def runCamera():
     encoder_lock = threading.Lock()
     encoder = None
     streamOutput = None
-    streaming = {"running": False}
+    streaming = {
+        "running": False,
+        "use_audio": use_audio_default,   # track effective audio usage
+        "audio_failures": 0               # count consecutive audio-related exits
+    }
 
     rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
 
-    # Replace pgrep with a /proc scan (more reliable, no shell)
-    def _find_ffmpeg_pid(target_url: str):
+    def _find_ffmpeg(target_url: str):
+        """Return (pid, cmdline) for ffmpeg process that matches the stream URL."""
         try:
             for pid in os.listdir("/proc"):
                 if not pid.isdigit():
@@ -106,15 +106,16 @@ def runCamera():
                         continue
                     cmd = " ".join(p.decode("utf-8", "ignore") for p in parts if p)
                     if target_url in cmd:
-                        return int(pid)
+                        return int(pid), cmd
                 except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
                     continue
         except Exception:
             pass
-        return None
+        return None, None
 
     def _ffmpeg_dead() -> bool:
-        return _find_ffmpeg_pid(rtsp_url) is None
+        pid, _ = _find_ffmpeg(rtsp_url)
+        return pid is None
 
     def start_stream():
         nonlocal encoder, streamOutput
@@ -122,20 +123,21 @@ def runCamera():
             logger.info("Starting RTSP encoder/output")
             enc = H264Encoder(2000000)
             try:
-                enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
+                enc.intra_period = 48
             except Exception:
                 pass
 
-            # Build FfmpegOutput with or without audio, passing device if supported
-            rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+            # Choose device string for ALSA (prefer plughw for format conversion)
+            dev = None
+            if streaming["use_audio"] and alsa_dev:
+                dev = alsa_dev
+                if not dev.startswith(("hw:", "plughw:")):
+                    dev = f"hw:{dev}"
+                if dev.startswith("hw:"):
+                    dev = "plughw" + dev[2:]
+
             try:
-                if use_audio and alsa_dev:
-                    dev = alsa_dev
-                    if not dev.startswith(("hw:", "plughw:")):
-                        dev = f"hw:{dev}"
-                    # Prefer plughw to let ALSA handle mono/stereo and rate conversion
-                    if dev.startswith("hw:"):
-                        dev = "plughw" + dev[2:]
+                if streaming["use_audio"] and dev:
                     out = FfmpegOutput(
                         f'-f rtsp -rtsp_transport tcp {rtsp_url}',
                         audio=True,
@@ -144,7 +146,8 @@ def runCamera():
                         audio_samplerate=AUDIO_SR,
                         audio_codec="aac"
                     )
-                elif use_audio:
+                elif streaming["use_audio"]:
+                    # May default to Pulse in older Picamera2; we will detect and fallback if it fails
                     out = FfmpegOutput(
                         f'-f rtsp -rtsp_transport tcp {rtsp_url}',
                         audio=True,
@@ -158,13 +161,13 @@ def runCamera():
                         audio=False
                     )
             except TypeError:
-                # Older Picamera2 without these kwargs
+                # Older Picamera2 without audio kwargs
                 params = f'-f rtsp -rtsp_transport tcp {rtsp_url}'
-                out = FfmpegOutput(params, audio=use_audio)
+                out = FfmpegOutput(params, audio=streaming["use_audio"])
 
             # Start encoder with output
             try:
-                Picamera2.start_encoder  # probe existence
+                Picamera2.start_encoder  # probe
                 picam2.start_encoder(enc, out)
             except TypeError:
                 enc.output = out
@@ -173,13 +176,16 @@ def runCamera():
                 enc.output = out
                 picam2.start_encoder()
 
-            # give ffmpeg a moment to spawn, then locate pid
-            time.sleep(0.5)
-            pid = _find_ffmpeg_pid(rtsp_url)
+            # allow ffmpeg to spawn
+            time.sleep(0.8)
+            pid, cmd = _find_ffmpeg(rtsp_url)
             if pid:
-                logger.info(f"ffmpeg pid={pid} started")
+                logger.info(f"ffmpeg pid={pid} started; cmd='{cmd}'")
+                # Warn if Pulse backend is used (will fail without session)
+                if " -f pulse " in f" {cmd} " or " pulse " in f" {cmd} ":
+                    logger.warning("ffmpeg is using PulseAudio backend; if it dies on logout, set BIRBCAM_AUDIO_DEV=plughw:X,Y")
             else:
-                logger.warning("ffmpeg pid not found (debounced monitor will verify liveness)")
+                logger.warning("ffmpeg pid not found (watchdog will verify liveness)")
 
             encoder = enc
             streamOutput = out
@@ -217,9 +223,10 @@ def runCamera():
         dead_ticks = 0
         down_ticks = 0
         up_ticks = 0
-        DEAD_THRESH = 3   # require 3 consecutive misses (~6s) before restart
-        DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
-        UP_THRESH = 2     # require 2 consecutive successes before start
+        audio_flips = 0
+        DEAD_THRESH = 3
+        DOWN_THRESH = 3
+        UP_THRESH = 2
         while True:
             up = _rtsp_up(host, port)
             with encoder_lock:
@@ -227,8 +234,15 @@ def runCamera():
                     if _ffmpeg_dead():
                         dead_ticks += 1
                         if dead_ticks >= DEAD_THRESH:
+                            # Inspect last known cmd; if Pulse was used and no Pulse server, disable audio
+                            _, cmd = _find_ffmpeg(rtsp_url)  # usually None if dead, but try
+                            using_pulse = bool(cmd and (" -f pulse " in f" {cmd} " or " pulse " in f" {cmd} "))
                             logger.warning("ffmpeg missing for %d checks; restarting stream", dead_ticks)
                             stop_stream()
+                            if streaming["use_audio"] and (using_pulse or not alsa_dev):
+                                streaming["use_audio"] = False
+                                audio_flips += 1
+                                logger.warning("Disabling audio (fallback to video-only). Set BIRBCAM_AUDIO_DEV=plughw:X,Y to re-enable.")
                             dead_ticks = 0
                     else:
                         dead_ticks = 0
