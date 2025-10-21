@@ -4,6 +4,8 @@ import logging
 import socket
 import threading
 import subprocess
+import signal          # NEW
+import re              # NEW
 
 import numpy as np
 
@@ -23,15 +25,46 @@ def _rtsp_up(host, port, timeout=1.0):
     except OSError:
         return False
 
-def runCamera():
+# NEW: best-effort ALSA device discovery (card,device) -> "hw:X,Y"
+def _detect_alsa_device() -> str | None:
+    try:
+        out = subprocess.check_output(["arecord", "-l"], text=True)
+    except Exception:
+        return None
+    m = re.findall(r"card\s+(\d+).+device\s+(\d+):", out, flags=re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    card, dev = m[0]
+    return f"hw:{card},{dev}"
 
-    os.environ['PULSE_SERVER'] = "/run/user/1000/pulse/native"
+AUDIO_CH = int(os.environ.get("BIRBCAM_AUDIO_CHANNELS", "1"))
+AUDIO_SR = int(os.environ.get("BIRBCAM_AUDIO_RATE", "48000"))
+
+def runCamera():
+    # Survive SSH logout (don’t SIGHUP children like ffmpeg)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)  # NEW
+
+    # Audio selection: prefer ALSA; disable audio if none
+    requested_dev = os.environ.get("BIRBCAM_AUDIO_DEV")  # e.g. "hw:1,0"
+    alsa_dev = requested_dev or _detect_alsa_device()
+    use_audio = os.environ.get("BIRBCAM_ENABLE_AUDIO", "1") not in ("0", "false", "False")
+
+    if alsa_dev and use_audio:
+        os.environ.pop("PULSE_SERVER", None)  # avoid Pulse session dependency
+        logging.getLogger(__name__).info(f"Using ALSA audio device: {alsa_dev}")
+    else:
+        if not use_audio:
+            logging.getLogger(__name__).warning("Audio disabled by env (BIRBCAM_ENABLE_AUDIO=0)")
+        else:
+            logging.getLogger(__name__).warning("No ALSA capture device detected; disabling audio")
+        use_audio = False
+        # Optional: if you really want Pulse, set PULSE_SERVER here
 
     logging.basicConfig(
-                        filename='birb.log',
-                        format='%(asctime)s %(levelname)s %(module)s %(funcName)-8s %(message)s',
-                        level=logging.INFO,
-                        datefmt='%Y-%m-%d %H:%M:%S')
+        filename='birb.log',
+        format='%(asctime)s %(levelname)s %(module)s %(funcName)-8s %(message)s',
+        level=logging.INFO,
+        datefmt='%Y-%m-%d %H:%M:%S')
     
     config = birdCamera.readConfig()
     
@@ -92,10 +125,43 @@ def runCamera():
                 enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
             except Exception:
                 pass
-            out = FfmpegOutput(
-                f'-f rtsp -rtsp_transport tcp {rtsp_url}',
-                audio=True
-            )
+
+            # Build FfmpegOutput with or without audio, passing device if supported
+            rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+            try:
+                if use_audio and alsa_dev:
+                    dev = alsa_dev
+                    if not dev.startswith(("hw:", "plughw:")):
+                        dev = f"hw:{dev}"
+                    # Prefer plughw to let ALSA handle mono/stereo and rate conversion
+                    if dev.startswith("hw:"):
+                        dev = "plughw" + dev[2:]
+                    out = FfmpegOutput(
+                        f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                        audio=True,
+                        audio_device=dev,
+                        audio_channels=AUDIO_CH,
+                        audio_samplerate=AUDIO_SR,
+                        audio_codec="aac"
+                    )
+                elif use_audio:
+                    out = FfmpegOutput(
+                        f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                        audio=True,
+                        audio_channels=AUDIO_CH,
+                        audio_samplerate=AUDIO_SR,
+                        audio_codec="aac"
+                    )
+                else:
+                    out = FfmpegOutput(
+                        f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                        audio=False
+                    )
+            except TypeError:
+                # Older Picamera2 without these kwargs
+                params = f'-f rtsp -rtsp_transport tcp {rtsp_url}'
+                out = FfmpegOutput(params, audio=use_audio)
+
             # Start encoder with output
             try:
                 Picamera2.start_encoder  # probe existence
@@ -197,6 +263,8 @@ def runCamera():
     bwMode = False # greyscale mode on/off
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
+
+    logger.info(f"Audio config: use_audio={use_audio}, alsa_dev={alsa_dev}, ch={AUDIO_CH}, sr={AUDIO_SR}")
 
     while True:
 
