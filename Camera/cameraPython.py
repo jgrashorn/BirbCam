@@ -278,7 +278,7 @@ def runCamera():
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
 
-    logger.info(f"Audio config: use_audio={streaming["use_audio"]}, alsa_dev={alsa_dev}, ch={AUDIO_CH}, sr={AUDIO_SR}")
+    logger.info(f"Audio config: use_audio={streaming['use_audio']}, alsa_dev={alsa_dev}, ch={AUDIO_CH}, sr={AUDIO_SR}")
 
     while True:
 
