@@ -6,22 +6,18 @@
 <body>
   {% extends "base.html" %}
 
-  {% block title %}BirbCam · Dashboard{% endblock %}
+  {% block title %}BirbCam — Dashboard{% endblock %}
 
   {% block content %}
-    <h1 class="section-title">Camera Dashboard</h1>
-    <div class="grid">
-      {% for name in cameras %}
-        <div class="card">
-          <h3>📷 {{ name }}</h3>
-          <p class="muted">Live stream and recordings</p>
-          <div class="actions">
-            <a class="btn btn--primary" href="{{ url_for('camera', name=name) }}">🔴 Live View</a>
-            <a class="btn" href="{{ url_for('recordings', cam=name) }}">📼 Recordings</a>
-          </div>
-        </div>
+    <h2>Available cameras</h2>
+    <ul class="list">
+      {% for name, url in cameras.items() %}
+        <li>
+          <a class="btn" href="{{ url_for('camera', name=name) }}">📹 {{ name }}</a>
+          <a class="btn" href="{{ url_for('recordings', cam=name) }}">🎞 Recordings</a>
+        </li>
       {% endfor %}
-    </div>
+    </ul>
   {% endblock %}
 </body>
 </html>

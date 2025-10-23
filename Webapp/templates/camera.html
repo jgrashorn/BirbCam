@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
-  {% block title %}Viewing {{ name }} · BirbCam{% endblock %}
+  {% extends "base.html" %}
+  {% block title %}{{ name }} — Live{% endblock %}
+  {% block page_class %}camera-page{% endblock %}
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     /* Light/Dark mode (no JS needed) */
@@ -59,19 +61,15 @@
       border-radius: 8px;
     }
   </style>
-  {% block head %}
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-  {% endblock %}
 </head>
 <body>
   {% block content %}
   <div class="container">
     <h1 class="section-title">Live View: {{ name }}</h1>
     <div class="player">
-      <video id="video" controls autoplay muted playsinline></video>
+      <video id="live" class="player-video" controls autoplay muted playsinline></video>
     </div>
     <div class="row" style="margin-top:10px">
-      <a class="btn" href="/">⬅ Back to dashboard</a>
       <button id="save60" class="btn">💾 Save last 60s</button>
       <span id="saveStatus" class="muted"></span>
     </div>
@@ -79,76 +77,60 @@
   {% endblock %}
 
   {% block scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
-    const url = "{{ stream_url }}";
-    const video = document.getElementById('video');
-    let hls;
+    (function(){
+      const url = "{{ stream_url }}";
+      const v = document.getElementById('live');
+      // Ensure autoplay compatibility
+      v.muted = true; v.autoplay = true; v.playsInline = true;
 
-    function attach() {
-      if (hls) { try { hls.destroy(); } catch(e) {} }
-      if (Hls.isSupported()) {
-        hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-          // keep your working DVR behavior (no counts mixed in)
-          liveSyncDuration: 3,
-          liveMaxLatencyDuration: 3600,
-          liveSyncDurationCount: undefined,
-          liveMaxLatencyDurationCount: undefined,
-          maxLiveSyncPlaybackRate: 1.0,
-          maxBufferLength: 30,
-          manifestLoadingMaxRetry: 10,
-          fragLoadingMaxRetry: 10,
-          manifestLoadingRetryDelay: 1000,
-          fragLoadingRetryDelay: 1000
-        });
+      function tryPlay() { v.play().catch(()=>{}); }
+
+      if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        v.src = url;
+        v.addEventListener('canplay', tryPlay, { once: true });
+        tryPlay();
+      } else if (Hls.isSupported()) {
+        const hls = new Hls({ autoStartLoad: true });
         hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.ERROR, function (event, data) {
+        hls.attachMedia(v);
+        v.addEventListener('canplay', tryPlay, { once: true });
+        tryPlay();
+        hls.on(Hls.Events.ERROR, (evt, data) => {
           if (data.fatal) {
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
             else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-            else setTimeout(attach, 1000);
+            else location.reload();
           }
         });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
+      } else {
+        v.outerHTML = '<p>HLS not supported in this browser.</p>';
       }
-    }
-    attach();
 
-    // Reload if stalled
-    let last = 0;
-    setInterval(() => {
-      if (!video.paused) {
-        if (video.currentTime === last) attach();
-        last = video.currentTime;
+      // Save last 60s
+      const btn = document.getElementById('save60');
+      const status = document.getElementById('saveStatus');
+      async function saveLast(seconds=60) {
+        btn.disabled = true;
+        status.textContent = `Saving last ${seconds}s...`;
+        try {
+          const res = await fetch("/api/clip", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ cam: "{{ name }}", seconds })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+          status.innerHTML = `Saved: <a class="btn" href="${data.url}">${data.filename}</a>`;
+        } catch (e) {
+          status.textContent = `Error: ${e.message}`;
+        } finally {
+          btn.disabled = false;
+        }
       }
-    }, 5000);
-
-    const saveBtn = document.getElementById('save60');
-    const saveStatus = document.getElementById('saveStatus');
-
-    async function saveLast(seconds=60) {
-      saveBtn.disabled = true;
-      saveStatus.textContent = `Saving last ${seconds}s...`;
-      try {
-        const res = await fetch("/api/clip", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ cam: "{{ name }}", seconds })
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
-        saveStatus.innerHTML = `Saved: <a href="${data.url}" class="btn">${data.filename}</a>`;
-      } catch (e) {
-        console.error(e);
-        saveStatus.textContent = `Error: ${e.message}`;
-      } finally {
-        saveBtn.disabled = false;
-      }
-    }
-    saveBtn.addEventListener('click', () => saveLast(60));
+      btn.addEventListener('click', () => saveLast(60));
+    })();
   </script>
   {% endblock %}
 </body>

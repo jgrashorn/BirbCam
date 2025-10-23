@@ -1,35 +1,127 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-  <title>Recordings - {{ cam }}</title>
+  <meta charset="utf-8">
+  <title>{{ cam }} recordings</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    .row { margin: 10px 0; }
+    .btn { display: inline-block; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; color: #222; background: #f7f7f7; }
+    .btn:hover { background: #eee; }
+    details { border: 1px solid #ddd; border-radius: 6px; margin: 10px 0; padding: 8px 10px; background: #fafafa; }
+    summary { font-weight: 600; cursor: pointer; }
+    ul.files { list-style: none; padding-left: 0; margin: 8px 0 0 0; }
+    ul.files li { margin: 4px 0; }
+    .muted { color: #666; font-size: 0.9em; }
+  </style>
 </head>
-<body>
-  {% extends "base.html" %}
+<!-- <body>
+  <div class="row">
+    <a class="btn" href="/">⬅ Back</a>
+    <span class="muted">Camera: <b>{{ cam }}</b></span>
+  </div>
 
-  {% block title %}Recordings · {{ cam }} · BirbCam{% endblock %}
+  <h2>Recordings by day</h2>
 
-  {% block content %}
-    <h1 class="section-title">📼 Recordings for {{ cam }}</h1>
-    {% if files and files|length %}
-      <ul class="list">
-        {% for file in files %}
-          <li class="stack">
-            <div class="row">
-              <a class="btn btn--primary" href="{{ url_for('serve_recording', cam=cam, filename=file) }}">⬇ Download</a>
-              <span class="muted">{{ file }}</span>
-            </div>
-            <video class="thumb" controls preload="metadata">
-              <source src="{{ url_for('serve_recording', cam=cam, filename=file) }}" type="video/mp4">
-            </video>
-          </li>
+  {% if groups and groups|length > 0 %}
+    {% for group in groups %}
+    <details {% if loop.first %}open{% endif %}>
+      <summary>
+        <a class="btn" href="{{ url_for('recordings_day', cam=cam, date=group.date) }}">📁 {{ group.date }}</a>
+        <span class="muted">({{ group.files|length }} files)</span>
+      </summary>
+      <ul class="files">
+        {% for f in group.files %}
+        <li>
+          <a href="{{ url_for('serve_recording', cam=cam, relpath=f.rel) }}">{{ f.name }}</a>
+          <span class="muted" data-ts="{{ f.ts }}"></span>
+        </li>
         {% endfor %}
       </ul>
-    {% else %}
-      <p class="muted">No recordings yet.</p>
-    {% endif %}
-    <div class="row" style="margin-top:10px">
-      <a class="btn" href="/">⬅ Back to dashboard</a>
-    </div>
-  {% endblock %}
-</body>
+    </details>
+    {% endfor %}
+  {% else %}
+    <p>No recordings found.</p>
+  {% endif %}
+
+  <script>
+    // Render human times next to filenames
+    for (const el of document.querySelectorAll('[data-ts]')) {
+      const ts = Number(el.dataset.ts) * 1000;
+      if (!isNaN(ts)) el.textContent = ' — ' + new Date(ts).toLocaleString();
+    }
+  </script>
+</body> -->
 </html>
+
+{% extends "base.html" %}
+{% block title %}Recordings — {{ cam }}{% endblock %}
+{% block page_class %}recordings-page{% endblock %}
+{% block content %}
+  <div class="split">
+    <section class="main">
+      <h2>{{ cam }} — Recording player</h2>
+      {% if selected_url %}
+      <video id="player" controls playsinline class="player-video" src="{{ selected_url }}"></video>
+      <div class="row">
+        <span class="muted">Now playing: {{ selected_name }}</span>
+      </div>
+      {% else %}
+      <p>No recording selected.</p>
+      {% endif %}
+    </section>
+
+    <aside class="sidebar right">
+      <h3>Browse recordings</h3>
+      <div class="scroll">
+        {% if groups and groups|length > 0 %}
+          {% for group in groups %}
+          <details {% if loop.first %}open{% endif %}>
+            <summary>📁 {{ group.date }} <span class="muted">({{ group.files|length }})</span></summary>
+            <ul class="files">
+              {% for f in group.files %}
+              <li>
+                <a href="{{ url_for('serve_recording', cam=cam, relpath=f.rel) }}"
+                   data-rel="{{ f.rel }}"
+                   data-url="{{ url_for('serve_recording', cam=cam, relpath=f.rel) }}">
+                  {{ f.name }}
+                </a>
+                <span class="muted" data-ts="{{ f.ts }}"></span>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endfor %}
+        {% else %}
+          <p>No recordings found.</p>
+        {% endif %}
+      </div>
+    </aside>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Pretty timestamps
+  for (const el of document.querySelectorAll('[data-ts]')) {
+    const ts = Number(el.dataset.ts) * 1000;
+    if (!isNaN(ts)) el.textContent = ' — ' + new Date(ts).toLocaleString();
+  }
+  // In-page play without navigation
+  const player = document.getElementById('player');
+  document.querySelectorAll('.files a[data-url]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      if (!player) return;
+      e.preventDefault();
+      const url = a.dataset.url;
+      player.src = url;
+      player.play().catch(()=>{});
+      const label = a.textContent.trim();
+      const info = document.querySelector('.row .muted');
+      if (info) info.textContent = 'Now playing: ' + label;
+      const params = new URLSearchParams(window.location.search);
+      params.set('rel', a.dataset.rel);
+      history.replaceState(null, '', window.location.pathname + '?' + params.toString());
+    });
+  });
+</script>
+{% endblock %}

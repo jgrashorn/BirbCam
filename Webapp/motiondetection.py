@@ -436,7 +436,10 @@ def process_once():
             else:
                 base = sanitize_name(p)
                 stamp = f"{int(time.time())}"
-                out = OUTPUT_DIR / f"{base}_{wi}_{stamp}.mp4"
+                day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
+                day_dir = OUTPUT_DIR / day
+                day_dir.mkdir(parents=True, exist_ok=True)
+                out = day_dir / f"{base}_{wi}_{stamp}.mp4"
                 if out.name in produced:
                     logger.debug(f"[dupe] {out.name} already produced; skipping")
                     continue
