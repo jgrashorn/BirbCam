@@ -25,6 +25,19 @@ User=<username>
 ExecStart=</path/to/folder>/.venv/bin/python </path/to/folder>/Camera/cameraPython.py
 ```
 
+## pulseaudio
+
+It is absolutely important to keep `pulseaudio` running when the user is logged out if using a microphone. Otherwise the systemd-process will shut down and crash the script.
+Here is what I did (I think, this is based on bash's history):
+
+```
+loginctl enable-linger <user>
+sudo systemctl start user@<userid>.service
+sudo -u <user> systemctl --user enable --now pulseaudio.socket pulseaudio.service
+```
+
+`<userid>` is the user's ID (`id -u <user>`)
+
 # Server
 
 ## mediamtx
@@ -32,17 +45,6 @@ ExecStart=</path/to/folder>/.venv/bin/python </path/to/folder>/Camera/cameraPyth
 For rtsp-Server
 ```
 https://github.com/bluenviron/mediamtx
-```
-
-## webapp
-```
-multi_cam_dashboard/
-├── app.py
-├── templates/
-│   ├── index.html
-│   └── camera.html
-├── static/
-│   └── (optional: style.css, logos, etc.)
 ```
 
 # Useful
