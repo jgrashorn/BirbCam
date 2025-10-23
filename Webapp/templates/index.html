@@ -4,15 +4,20 @@
   <title>Multi-Cam Dashboard</title>
 </head>
 <body>
-  <h1>🎥 Camera Dashboard</h1>
-  <ul>
-    {% for name in cameras %}
-      <li>
-        <strong>{{ name }}</strong><br>
-        🔴 <a href="{{ url_for('camera', name=name) }}">Live View</a> |
-        📼 <a href="{{ url_for('recordings', cam=name) }}">Recordings</a>
-      </li>
-    {% endfor %}
-  </ul>
+  {% extends "base.html" %}
+
+  {% block title %}BirbCam — Dashboard{% endblock %}
+
+  {% block content %}
+    <h2>Available cameras</h2>
+    <ul class="list">
+      {% for name, url in cameras.items() %}
+        <li>
+          <a class="btn" href="{{ url_for('camera', name=name) }}">📹 {{ name }}</a>
+          <a class="btn" href="{{ url_for('recordings', cam=name) }}">🎞 Recordings</a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endblock %}
 </body>
 </html>

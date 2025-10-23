@@ -1,62 +1,138 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Viewing {{ name }}</title>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-</head>
-<body>
-  <h1>Live View: {{ name }}</h1>
-  <video id="video" controls autoplay muted playsinline></video>
-
-  <script>
-    const url = "{{ stream_url }}";
-    const video = document.getElementById('video');
-    let hls;
-
-    function attach() {
-      if (hls) { try { hls.destroy(); } catch(e) {} }
-      if (Hls.isSupported()) {
-        hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-          liveSyncDuration: 3,
-          liveMaxLatencyDuration: 10,
-          maxBufferLength: 10,
-          manifestLoadingMaxRetry: 10,
-          fragLoadingMaxRetry: 10,
-          manifestLoadingRetryDelay: 1000,
-          fragLoadingRetryDelay: 1000
-        });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.ERROR, function (event, data) {
-          if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              hls.startLoad();
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
-              setTimeout(attach, 1000);
-            }
-          }
-        });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
+  {% extends "base.html" %}
+  {% block title %}{{ name }} — Live{% endblock %}
+  {% block page_class %}camera-page{% endblock %}
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* Light/Dark mode (no JS needed) */
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #1f2328;
+      --border: #d0d7de;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --surface: #0e1420;
+        --text: #e6edf3;
+        --border: #273242;
       }
     }
-    attach();
+    /* Layout + responsive player */
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+    }
+    .container {
+      width: min(1100px, 92vw);
+      margin: 0 auto;
+      padding: 16px;
+    }
+    .section-title { margin: 12px 0 8px; font-size: 18px; }
+    .player {
+      margin-top: 8px;
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px;
+    }
+    .player video {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: calc(100vh - 180px); /* keep smaller than viewport */
+      object-fit: contain;
+      background: #000;
+      border-radius: 8px;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      display: inline-block;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  {% block content %}
+  <div class="container">
+    <h1 class="section-title">Live View: {{ name }}</h1>
+    <div class="player">
+      <video id="live" class="player-video" controls autoplay muted playsinline></video>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="save60" class="btn">💾 Save last 60s</button>
+      <span id="saveStatus" class="muted"></span>
+    </div>
+  </div>
+  {% endblock %}
 
-    // Reload if stalled
-    let last = 0;
-    setInterval(() => {
-      if (!video.paused) {
-        if (video.currentTime === last) attach();
-        last = video.currentTime;
+  {% block scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    (function(){
+      const url = "{{ stream_url }}";
+      const v = document.getElementById('live');
+      // Ensure autoplay compatibility
+      v.muted = true; v.autoplay = true; v.playsInline = true;
+
+      function tryPlay() { v.play().catch(()=>{}); }
+
+      if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        v.src = url;
+        v.addEventListener('canplay', tryPlay, { once: true });
+        tryPlay();
+      } else if (Hls.isSupported()) {
+        const hls = new Hls({ autoStartLoad: true });
+        hls.loadSource(url);
+        hls.attachMedia(v);
+        v.addEventListener('canplay', tryPlay, { once: true });
+        tryPlay();
+        hls.on(Hls.Events.ERROR, (evt, data) => {
+          if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+            else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+            else location.reload();
+          }
+        });
+      } else {
+        v.outerHTML = '<p>HLS not supported in this browser.</p>';
       }
-    }, 5000);
-  </script>
 
-  <p><a href="/">⬅ Back to dashboard</a></p>
+      // Save last 60s
+      const btn = document.getElementById('save60');
+      const status = document.getElementById('saveStatus');
+      async function saveLast(seconds=60) {
+        btn.disabled = true;
+        status.textContent = `Saving last ${seconds}s...`;
+        try {
+          const res = await fetch("/api/clip", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ cam: "{{ name }}", seconds })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+          status.innerHTML = `Saved: <a class="btn" href="${data.url}">${data.filename}</a>`;
+        } catch (e) {
+          status.textContent = `Error: ${e.message}`;
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      btn.addEventListener('click', () => saveLast(60));
+    })();
+  </script>
+  {% endblock %}
 </body>
 </html>
 

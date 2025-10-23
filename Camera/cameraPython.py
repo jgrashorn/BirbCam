@@ -1,18 +1,27 @@
 import time
-import datetime
 import os
 import logging
+import socket
+import threading
+import subprocess
 
 import numpy as np
 
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import CircularOutput, FfmpegOutput
+from picamera2.outputs import FfmpegOutput
 
 import libcamera
 import birdCamera
 
 logger = logging.getLogger(__name__)
+
+def _rtsp_up(host, port, timeout=1.0):
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 def runCamera():
 
@@ -38,39 +47,152 @@ def runCamera():
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
     
     picam2.configure(video_config)
-    encoder = H264Encoder(2000000)
 
-    #streamOutput = FfmpegOutput(f'-r 24 -f mpegts udp://localhost:{config["streamPort"]}?pkt_size=1316', audio=True)
-    #streamOutput = FfmpegOutput("-f rtsp -rtsp_transport udp rtsp://myuser:mypass@localhost:8554/hqstream", audio=True)
-    streamOutput = FfmpegOutput(f'-f rtsp -rtsp_transport tcp rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}',audio=True, audio_codec="aac", audio_sync=config["audioDelay"])
-    # streamOutput = FfmpegOutput(f'/home/birb/test.mp4', audio=True, audio_device = 'default')
-    # mp4Output = CircularOutput()
-    # encoder.output = [streamOutput,mp4Output]
-    encoder.output = streamOutput
-    picam2.encoders = encoder
+    # --- self-healing RTSP publisher ---
+    encoder_lock = threading.Lock()
+    encoder = None
+    streamOutput = None
+    streaming = {"running": False}
+
+    rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+
+    # Replace pgrep with a /proc scan (more reliable, no shell)
+    def _find_ffmpeg_pid(target_url: str):
+        try:
+            for pid in os.listdir("/proc"):
+                if not pid.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        raw = f.read()
+                    if not raw:
+                        continue
+                    parts = raw.split(b"\x00")
+                    exe = parts[0].decode("utf-8", "ignore")
+                    if "ffmpeg" not in exe:
+                        continue
+                    cmd = " ".join(p.decode("utf-8", "ignore") for p in parts if p)
+                    if target_url in cmd:
+                        return int(pid)
+                except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def _ffmpeg_dead() -> bool:
+        return _find_ffmpeg_pid(rtsp_url) is None
+
+    def start_stream():
+        nonlocal encoder, streamOutput
+        try:
+            logger.info("Starting RTSP encoder/output")
+            enc = H264Encoder(2000000)
+            try:
+                enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
+            except Exception:
+                pass
+            out = FfmpegOutput(
+                f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                audio=True
+            )
+            # Start encoder with output
+            try:
+                Picamera2.start_encoder  # probe existence
+                picam2.start_encoder(enc, out)
+            except TypeError:
+                enc.output = out
+                picam2.start_encoder()
+            except AttributeError:
+                enc.output = out
+                picam2.start_encoder()
+
+            # give ffmpeg a moment to spawn, then locate pid
+            time.sleep(0.5)
+            pid = _find_ffmpeg_pid(rtsp_url)
+            if pid:
+                logger.info(f"ffmpeg pid={pid} started")
+            else:
+                logger.warning("ffmpeg pid not found (debounced monitor will verify liveness)")
+
+            encoder = enc
+            streamOutput = out
+            streaming["running"] = True
+        except Exception as e:
+            logger.error(f"Failed to start stream: {e}", exc_info=True)
+            streaming["running"] = False
+
+    def stop_stream():
+        nonlocal encoder, streamOutput
+        try:
+            logger.info("Stopping RTSP encoder/output")
+            try:
+                picam2.stop_encoder()
+            except Exception:
+                pass
+            try:
+                if hasattr(streamOutput, "stop"):
+                    streamOutput.stop()
+            except Exception:
+                pass
+            try:
+                if hasattr(encoder, "close"):
+                    encoder.close()
+            except Exception:
+                pass
+        finally:
+            encoder = None
+            streamOutput = None
+            streaming["running"] = False
+
+    def stream_manager():
+        host = config["serverIP"]
+        port = config["rtspPort"]
+        dead_ticks = 0
+        down_ticks = 0
+        up_ticks = 0
+        DEAD_THRESH = 3   # require 3 consecutive misses (~6s) before restart
+        DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
+        UP_THRESH = 2     # require 2 consecutive successes before start
+        while True:
+            up = _rtsp_up(host, port)
+            with encoder_lock:
+                if streaming["running"]:
+                    if _ffmpeg_dead():
+                        dead_ticks += 1
+                        if dead_ticks >= DEAD_THRESH:
+                            logger.warning("ffmpeg missing for %d checks; restarting stream", dead_ticks)
+                            stop_stream()
+                            dead_ticks = 0
+                    else:
+                        dead_ticks = 0
+
+                if not up:
+                    down_ticks += 1
+                    up_ticks = 0
+                    if streaming["running"] and down_ticks >= DOWN_THRESH:
+                        logger.warning("RTSP not reachable for %d checks; stopping encoder", down_ticks)
+                        stop_stream()
+                        down_ticks = 0
+                else:
+                    down_ticks = 0
+                    if not streaming["running"]:
+                        up_ticks += 1
+                        if up_ticks >= UP_THRESH:
+                            start_stream()
+                            up_ticks = 0
+                    else:
+                        up_ticks = 0
+            time.sleep(2)
+
+    # Start camera and manager; encoder will start when RTSP is reachable
     picam2.start()
-    picam2.start_encoder()
-    
-    ltime = time.time()
-
-    # streamOutput.stop()
+    threading.Thread(target=stream_manager, daemon=True).start()
 
     w, h = lsize
 
-    encoding = False
-
-    ltime = 0
-    starttime = 0
-    # fname = ""
-
-    # failedToSend = []
-
     prev = picam2.capture_buffer("lores")
     prev = prev[:w * h].reshape(h, w).astype(np.int16)
-
-    mseSensitivity = config["sensitivity"]
-    pixelThreshold = config["numPixelsThreshold"]
-    detectionThreshold = config["detectionThreshold"]
 
     bwMode = False # greyscale mode on/off
     currBrightness = 0
@@ -88,7 +210,6 @@ def runCamera():
         if skipNFrames > 0: 
             skipNFrames -= 1
 
-        # if no frames are skipped, do the thing
         else:
             # switch mode in case brightness reached threshold, then skip some frames
             if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
@@ -102,42 +223,6 @@ def runCamera():
                 picam2.set_controls({"Saturation": 0.0})
                 bwMode = True
                 skipNFrames = config["skippedFramesAfterChange"]
-
-            # measure pixels differences (mse) between current and previous frame
-            diff = np.subtract(cur, prev)
-            mse = np.square(diff).mean()
-
-            # measure individual pixel difference to detect local changes
-            diffComp = (np.abs(diff) > detectionThreshold) * np.ones(diff.shape)
-        
-            if mse > mseSensitivity or np.sum(diffComp) > pixelThreshold:
-                
-                if not encoding:
-                    birdCamera.SendStartTrigger(config["serverIP"],config["port"])
-                    logger.info("Started recording.")
-                    logger.info( f"New Motion, mse: {mse:5.2f}, diffSum: {np.sum(diffComp):.0f}" )
-                    
-                    # change thresholds for stopping
-                    mseSensitivity = config["stopSensitivity"]
-                    pixelThreshold = config["stopNumPixelsThreshold"]
-                    detectionThreshold = config["stopDetectionThreshold"]
-
-                    starttime = time.time()
-                    encoding = True
-                    
-                ltime = time.time()
-                
-            else:
-                if encoding and ((time.time() - ltime > config["captureDelay"]) or (time.time() - starttime > config["maxRecordTime"])):
-
-                    birdCamera.SendStopTrigger(config["serverIP"],config["port"])
-                    encoding = False
-                    logger.info("Stopped.")
-                    
-                    # change thresholds to starting values
-                    mseSensitivity = config["sensitivity"]
-                    pixelThreshold = config["numPixelsThreshold"]
-                    detectionThreshold = config["detectionThreshold"]
    
         prev = cur # overwrite previous frame with current one
 
