@@ -206,7 +206,6 @@ def runCamera():
     while True:
         # Check for configuration changes
         if birdCamera.waitForConfigChange(timeout=0.1):  # Non-blocking check
-            stop_stream()
             logger.info("Configuration changed, reloading...")
             new_config = birdCamera.getCurrentConfig()
             
@@ -228,8 +227,6 @@ def runCamera():
             config.update(new_config)
             skipNFrames = config["skippedFramesAfterChange"]  # Reset frames after config change
             logger.info(config)
-            
-            start_stream()
             
         # capture new preview and reshape
         cur = picam2.capture_buffer("lores")
