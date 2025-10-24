@@ -83,15 +83,24 @@ def handleSettingsClient(client_socket, address):
                     config_json = data[11:]  # Remove "SET_CONFIG:" prefix
                     new_config = json.loads(config_json)
                     
+                    # Ensure backwards compatibility: settingsPort can be used as port
+                    if "settingsPort" in new_config and "port" not in new_config:
+                        new_config["port"] = new_config["settingsPort"]
+                    
                     # Validate configuration keys (basic validation)
-                    required_keys = ["serverIP", "port", "name", "rtspPort", "width", "height"]
-                    if all(key in new_config for key in required_keys):
+                    required_keys = ["serverIP", "name", "rtspPort", "width", "height"]
+                    missing_keys = [key for key in required_keys if key not in new_config]
+
+                    logger.info(f"Validating new configuration: {new_config}")
+                    logger.info(f"Missing keys: {missing_keys}")
+                    
+                    if not missing_keys:
                         if writeConfig(new_config):
                             response = json.dumps({"status": "ok", "message": "Configuration updated"})
                         else:
                             response = json.dumps({"status": "error", "message": "Failed to save configuration"})
                     else:
-                        response = json.dumps({"status": "error", "message": "Missing required configuration keys"})
+                        response = json.dumps({"status": "error", "message": f"Missing required configuration keys: {', '.join(missing_keys)}"})
                         
                 except json.JSONDecodeError as e:
                     response = json.dumps({"status": "error", "message": f"Invalid JSON: {str(e)}"})

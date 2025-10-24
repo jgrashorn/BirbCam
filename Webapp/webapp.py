@@ -12,7 +12,7 @@ cameras = {
 
 # Camera settings endpoints configuration
 camera_endpoints = {
-    "garten": {"ip": "192.168.178.38", "port": 5005}
+    "garten": {"ip": "192.168.178.40", "port": 5005}
     # Add more camera endpoints here
 }
 
