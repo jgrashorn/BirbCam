@@ -237,8 +237,8 @@ def runCamera():
         #calculate current brightness
         currBrightness = np.square(cur).mean()
 
-        logger.info(f"Current brightness: {currBrightness}, bwMode: {bwMode}, skipNFrames: {skipNFrames}")
-        
+        logger.info(f"Image: {cur}, Current brightness: {currBrightness}, bwMode: {bwMode}, skipNFrames: {skipNFrames}")
+
         # skip some frames, e.g. if mode was changed
         if skipNFrames > 0: 
             skipNFrames -= 1
