@@ -205,17 +205,18 @@ def runCamera():
     while True:
         # Check for configuration changes
         if birdCamera.waitForConfigChange(timeout=0.1):  # Non-blocking check
+            stop_stream()
             logger.info("Configuration changed, reloading...")
             new_config = birdCamera.getCurrentConfig()
             
             # Update color gains if they changed
-            if (config.get("colorOffset_red") != new_config.get("colorOffset_red") or
-                config.get("colorOffset_blue") != new_config.get("colorOffset_blue")):
+            if (config["colorOffset_red"] != new_config["colorOffset_red"] or
+                config["colorOffset_blue"] != new_config["colorOffset_blue"]):
                 try:
                     picam2.set_controls({
                         "ColourGains": (
-                            new_config.get("colorOffset_red", config["colorOffset_red"]), 
-                            new_config.get("colorOffset_blue", config["colorOffset_blue"])
+                            new_config["colorOffset_red"], 
+                            new_config["colorOffset_blue"]
                         )
                     })
                     logger.info("Updated color gains")
@@ -224,7 +225,10 @@ def runCamera():
             
             # Update configuration reference
             config.update(new_config)
-            skipNFrames = config.get("skippedFramesAfterChange", 50)  # Reset frames after config change
+            skipNFrames = config["skippedFramesAfterChange"]  # Reset frames after config change
+            logger.info(config)
+            
+            start_stream()
             
         # capture new preview and reshape
         cur = picam2.capture_buffer("lores")
@@ -238,18 +242,18 @@ def runCamera():
 
         else:
             # switch mode in case brightness reached threshold, then skip some frames
-            if bwMode and currBrightness > config.get("clrSwitchingSensitivity", 1800):
+            if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
                 logger.info("switching mode to color")
                 picam2.set_controls({"Saturation": 1.0})
                 bwMode = False
-                skipNFrames = config.get("skippedFramesAfterChange", 50)
+                skipNFrames = config["skippedFramesAfterChange"]
 
-            elif not bwMode and currBrightness < config.get("bwSwitchingSensitivity", 1500):
+            elif not bwMode and currBrightness < config["bwSwitchingSensitivity"]:
                 logger.info("switching mode to greyscale")
                 picam2.set_controls({"Saturation": 0.0})
                 bwMode = True
-                skipNFrames = config.get("skippedFramesAfterChange", 50)
-   
+                skipNFrames = config["skippedFramesAfterChange"]
+
         prev = cur # overwrite previous frame with current one
 
 if __name__ == "__main__":
