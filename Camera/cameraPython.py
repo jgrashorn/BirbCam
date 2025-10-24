@@ -199,6 +199,7 @@ def runCamera():
     prev = prev[:w * h].reshape(h, w).astype(np.int16)
 
     bwMode = False # greyscale mode on/off
+    picam2.set_controls({"Saturation": 1.0})
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
 
