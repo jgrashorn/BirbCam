@@ -35,6 +35,10 @@ def runCamera():
     
     config = birdCamera.readConfig()
     
+    # Start settings server
+    settings_port = config.get("settingsPort", 5005)
+    birdCamera.startSettingsServer(settings_port)
+    
     lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
@@ -183,7 +187,7 @@ def runCamera():
                             up_ticks = 0
                     else:
                         up_ticks = 0
-            time.sleep(2)
+            time.sleep(10)
 
     # Start camera and manager; encoder will start when RTSP is reachable
     picam2.start()
@@ -199,7 +203,29 @@ def runCamera():
     skipNFrames = 10 # skip the first frames to avoid recording on startup
 
     while True:
-
+        # Check for configuration changes
+        if birdCamera.waitForConfigChange(timeout=0.1):  # Non-blocking check
+            logger.info("Configuration changed, reloading...")
+            new_config = birdCamera.getCurrentConfig()
+            
+            # Update color gains if they changed
+            if (config.get("colorOffset_red") != new_config.get("colorOffset_red") or
+                config.get("colorOffset_blue") != new_config.get("colorOffset_blue")):
+                try:
+                    picam2.set_controls({
+                        "ColourGains": (
+                            new_config.get("colorOffset_red", config["colorOffset_red"]), 
+                            new_config.get("colorOffset_blue", config["colorOffset_blue"])
+                        )
+                    })
+                    logger.info("Updated color gains")
+                except Exception as e:
+                    logger.error(f"Failed to update color gains: {e}")
+            
+            # Update configuration reference
+            config.update(new_config)
+            skipNFrames = config.get("skippedFramesAfterChange", 50)  # Reset frames after config change
+            
         # capture new preview and reshape
         cur = picam2.capture_buffer("lores")
         cur = cur[:w * h].reshape(h, w).astype(np.int16)
@@ -212,17 +238,17 @@ def runCamera():
 
         else:
             # switch mode in case brightness reached threshold, then skip some frames
-            if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
+            if bwMode and currBrightness > config.get("clrSwitchingSensitivity", 1800):
                 logger.info("switching mode to color")
                 picam2.set_controls({"Saturation": 1.0})
                 bwMode = False
-                skipNFrames = config["skippedFramesAfterChange"]
+                skipNFrames = config.get("skippedFramesAfterChange", 50)
 
-            elif not bwMode and currBrightness < config["bwSwitchingSensitivity"]:
+            elif not bwMode and currBrightness < config.get("bwSwitchingSensitivity", 1500):
                 logger.info("switching mode to greyscale")
                 picam2.set_controls({"Saturation": 0.0})
                 bwMode = True
-                skipNFrames = config["skippedFramesAfterChange"]
+                skipNFrames = config.get("skippedFramesAfterChange", 50)
    
         prev = cur # overwrite previous frame with current one
 

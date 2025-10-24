@@ -1,5 +1,5 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify, url_for, abort
-import os, time, subprocess
+import os, time, subprocess, socket, json
 from pathlib import Path
 
 app = Flask(__name__)
@@ -8,6 +8,12 @@ app = Flask(__name__)
 cameras = {
     "garten": "http://192.168.178.38:8888/garten/index.m3u8"
     # Add more cameras here
+}
+
+# Camera settings endpoints configuration
+camera_endpoints = {
+    "garten": {"ip": "192.168.178.38", "port": 5005}
+    # Add more camera endpoints here
 }
 
 @app.route('/')
@@ -20,6 +26,58 @@ def camera(name):
     if not stream_url:
         return "Camera not found", 404
     return render_template('camera.html', name=name, stream_url=stream_url)
+
+@app.route('/settings/<cam>')
+def settings(cam):
+    if cam not in cameras:
+        return "Camera not found", 404
+    
+    # Get current configuration from camera
+    config_response = get_camera_config(cam)
+    if config_response.get("status") == "ok":
+        current_config = config_response.get("config", {})
+    else:
+        current_config = {}
+        error_message = config_response.get("message", "Failed to get configuration")
+    
+    return render_template('settings.html', 
+                         cam=cam, 
+                         config=current_config,
+                         error=config_response.get("message") if config_response.get("status") != "ok" else None)
+
+@app.route('/api/settings/<cam>', methods=['GET'])
+def api_get_settings(cam):
+    if cam not in cameras:
+        return jsonify({"status": "error", "message": "Camera not found"}), 404
+    
+    return jsonify(get_camera_config(cam))
+
+@app.route('/api/settings/<cam>', methods=['POST'])
+def api_set_settings(cam):
+    if cam not in cameras:
+        return jsonify({"status": "error", "message": "Camera not found"}), 404
+    
+    try:
+        new_config = request.get_json()
+        if not new_config:
+            return jsonify({"status": "error", "message": "No configuration provided"}), 400
+        
+        result = set_camera_config(cam, new_config)
+        
+        if result.get("status") == "ok":
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/ping/<cam>')
+def api_ping_camera(cam):
+    if cam not in cameras:
+        return jsonify({"status": "error", "message": "Camera not found"}), 404
+    
+    return jsonify(ping_camera(cam))
 
 RECORD_ROOT = Path(os.environ.get("BIRBCAM_MEDIA_DIR", "/home/birb/mediamtx/recordings"))
 WEB_RECORD_ROOT = Path(os.environ.get("BIRBCAM_OUTPUT_DIR", "/home/birb/BirbCam/Webapp/recordings"))
@@ -80,6 +138,48 @@ def _concat(parts: list[Path], dst: Path) -> bool:
     try: lst.unlink(missing_ok=True)
     except Exception: pass
     return rc == 0 and dst.exists() and dst.stat().st_size > 0
+
+def communicate_with_camera(cam_name: str, command: str, timeout=10):
+    """Send command to camera settings server and get response."""
+    if cam_name not in camera_endpoints:
+        return {"status": "error", "message": f"Unknown camera: {cam_name}"}
+    
+    endpoint = camera_endpoints[cam_name]
+    
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((endpoint["ip"], endpoint["port"]))
+            
+            # Send command
+            sock.send((command + "\n").encode('utf-8'))
+            
+            # Receive response
+            response = sock.recv(4096).decode('utf-8').strip()
+            
+            return json.loads(response)
+            
+    except socket.timeout:
+        return {"status": "error", "message": "Connection timeout"}
+    except ConnectionRefusedError:
+        return {"status": "error", "message": "Camera not reachable"}
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "Invalid response from camera"}
+    except Exception as e:
+        return {"status": "error", "message": f"Communication error: {str(e)}"}
+
+def get_camera_config(cam_name: str):
+    """Get current configuration from camera."""
+    return communicate_with_camera(cam_name, "GET_CONFIG")
+
+def set_camera_config(cam_name: str, config: dict):
+    """Send new configuration to camera."""
+    config_json = json.dumps(config)
+    return communicate_with_camera(cam_name, f"SET_CONFIG:{config_json}")
+
+def ping_camera(cam_name: str):
+    """Ping camera to check if it's reachable."""
+    return communicate_with_camera(cam_name, "PING")
 
 @app.post("/api/clip")
 def api_clip_last():
