@@ -233,7 +233,7 @@ def runCamera():
             
         # capture new preview and reshape
         cur = picam2.capture_buffer("lores")
-        # cur = cur[:w * h].reshape(h, w).astype(np.float32)
+        cur = cur[:w * h].reshape(h, w).astype(np.float32)
         #calculate current brightness
         currBrightness = np.square(cur).mean()
 
