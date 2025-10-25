@@ -2,7 +2,40 @@ from flask import Flask, render_template, send_from_directory, request, jsonify,
 import os, time, subprocess, socket, json
 from pathlib import Path
 
+# Load environment variables from .env file if it exists
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists():
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+
+# Load environment before importing config
+load_env_file()
+
+try:
+    from config import config
+except ImportError:
+    # Try importing from parent directory if running from project root
+    import sys
+    sys.path.append(str(Path(__file__).parent))
+    from config import config
+
 app = Flask(__name__)
+
+# Validate configuration at startup
+try:
+    config.validate_directories(create=True)
+    print(f"✓ Configuration validated for camera: {config.camera}")
+    print(f"✓ Media directory: {config.media_dir}")
+    print(f"✓ Output directory: {config.output_dir}")
+except Exception as e:
+    print(f"✗ Configuration error: {e}")
+    exit(1)
 
 # Define your available cameras and their HLS paths
 cameras = {
@@ -79,8 +112,9 @@ def api_ping_camera(cam):
     
     return jsonify(ping_camera(cam))
 
-RECORD_ROOT = Path(os.environ.get("BIRBCAM_MEDIA_DIR", "/home/birb/mediamtx/recordings"))
-WEB_RECORD_ROOT = Path(os.environ.get("BIRBCAM_OUTPUT_DIR", "/home/birb/BirbCam/Webapp/recordings"))
+# Use centralized configuration
+RECORD_ROOT = config.media_dir
+WEB_RECORD_ROOT = config.output_dir
 
 def _ffprobe_duration(path: Path) -> float:
     try:
