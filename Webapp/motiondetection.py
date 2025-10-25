@@ -725,9 +725,12 @@ def process_once():
             if head_touch_idx is not None:
                 base = sanitize_name(p)
                 stamp = f"{int(time.time())}"
-                tmp1 = OUTPUT_DIR / f"._tmp_{base}_{wi}_{stamp}_a.mp4"
-                tmp2 = OUTPUT_DIR / f"._tmp_{base}_{wi}_{stamp}_b.mp4"
-                out = OUTPUT_DIR / f"{base}_{wi}_{stamp}_joined.mp4"
+                day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
+                day_dir = OUTPUT_DIR / day
+                day_dir.mkdir(parents=True, exist_ok=True)
+                tmp1 = day_dir / f"._tmp_{base}_{wi}_{stamp}_a.mp4"
+                tmp2 = day_dir / f"._tmp_{base}_{wi}_{stamp}_b.mp4"
+                out = day_dir / f"{base}_{wi}_{stamp}_joined.mp4"
                 logger.debug(f"[join] tail->head across files: {p.name} -> {next_p.name}")
 
                 ok1 = _run_ffmpeg_trim(p, s, duration, tmp1)
