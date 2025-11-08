@@ -11,10 +11,10 @@
   {% block content %}
     <h2>Available cameras</h2>
     <ul class="list">
-      {% for name, url in cameras.items() %}
+      {% for cam, url in cameras.items() %}
         <li>
-          <a class="btn" href="{{ url_for('camera', name=name) }}">📹 {{ name }}</a>
-          <a class="btn" href="{{ url_for('recordings', cam=name) }}">🎞 Recordings</a>
+          <a class="btn" href="{{ url_for('camera', cam=cam) }}">📹 {{ cam }}</a>
+          <a class="btn" href="{{ url_for('recordings', cam=cam) }}">🎞 Recordings</a>
         </li>
       {% endfor %}
     </ul>

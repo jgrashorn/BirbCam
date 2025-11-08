@@ -2,7 +2,7 @@
 <html>
 <head>
   {% extends "base.html" %}
-  {% block title %}{{ name }} — Live{% endblock %}
+  {% block title %}{{ cam }} — Live{% endblock %}
   {% block page_class %}camera-page{% endblock %}
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
@@ -65,13 +65,16 @@
 <body>
   {% block content %}
   <div class="container">
-    <h1 class="section-title">Live View: {{ name }}</h1>
+    <h1 class="section-title">Live View: {{ cam }}</h1>
     <div class="player">
       <video id="live" class="player-video" controls autoplay muted playsinline></video>
     </div>
     <div class="row" style="margin-top:10px">
       <button id="save60" class="btn">💾 Save last 60s</button>
+      <a class="btn" href="/recordings/{{ cam }}">🎞 Recordings</a>
+      <a class="btn" href="/settings/{{ cam }}">⚙️ Settings</a>
       <span id="saveStatus" class="muted"></span>
+      <span class="muted">Stream URL: {{ stream_url }}</span>
     </div>
   </div>
   {% endblock %}
@@ -118,7 +121,7 @@
           const res = await fetch("/api/clip", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ cam: "{{ name }}", seconds })
+            body: JSON.stringify({ cam: "{{ cam }}", seconds })
           });
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || "Failed");

@@ -1,5 +1,5 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify, url_for, abort
-import os, time, subprocess, socket, json
+import os, time, subprocess, socket, json, shutil, hashlib
 from pathlib import Path
 
 # Load environment variables from .env file if it exists
@@ -39,13 +39,13 @@ except Exception as e:
 
 # Define your available cameras and their HLS paths
 cameras = {
-    "garten": "http://192.168.178.38:8888/garten/index.m3u8"
+    "schwalben": "http://192.168.178.36:8888/schwalben/index.m3u8"
     # Add more cameras here
 }
 
 # Camera settings endpoints configuration
 camera_endpoints = {
-    "garten": {"ip": "192.168.178.40", "port": 5005}
+    "schwalben": {"ip": "192.168.178.25", "port": 5005}
     # Add more camera endpoints here
 }
 
@@ -53,12 +53,12 @@ camera_endpoints = {
 def index():
     return render_template('index.html', cameras=cameras)
 
-@app.route('/camera/<name>')
-def camera(name):
-    stream_url = cameras.get(name)
+@app.route('/camera/<cam>')
+def camera(cam):
+    stream_url = cameras.get(cam)
     if not stream_url:
         return "Camera not found", 404
-    return render_template('camera.html', name=name, stream_url=stream_url)
+    return render_template('camera.html', cam=cam, stream_url=stream_url)
 
 @app.route('/settings/<cam>')
 def settings(cam):
@@ -114,6 +114,7 @@ def api_ping_camera(cam):
 
 # Use centralized configuration
 RECORD_ROOT = config.media_dir
+TEMP_DIR = config.temp_dir
 WEB_RECORD_ROOT = config.output_dir
 
 def _ffprobe_duration(path: Path) -> float:
@@ -250,8 +251,14 @@ def api_clip_last():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_name = f"{cam}_{stamp}_last{seconds}s.mp4"
     out_path = out_dir / out_name
-    # temp files stay alongside final clip
-    tmp1 = out_dir / f"._tmp_last_{stamp}_a.mp4"
+    
+    # Create temporary directory for processing
+    temp_dir = Path(TEMP_DIR) / f"clip_{stamp}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_out_path = temp_dir / out_name
+    
+    # temp files in temporary directory
+    tmp1 = temp_dir / f"._tmp_last_{stamp}_a.mp4"
     if not _trim(last, t1_start, last_dur, tmp1):
         return jsonify(ok=False, error="Trim failed (last)"), 500
     parts.append(tmp1); tmp_parts.append(tmp1)
@@ -260,7 +267,7 @@ def api_clip_last():
     # If we still need more, take tail of prev
     if need > 0 and prev and prev_dur > 0:
         t0_start = max(0.0, prev_dur - need)
-        tmp0 = out_dir / f"._tmp_last_{stamp}_b.mp4"
+        tmp0 = temp_dir / f"._tmp_last_{stamp}_b.mp4"
         if not _trim(prev, t0_start, prev_dur, tmp0):
             for t in tmp_parts:
                 try: t.unlink(missing_ok=True)
@@ -270,18 +277,36 @@ def api_clip_last():
 
     # Single part -> move/rename; else concat
     if len(parts) == 1:
-        parts[0].rename(out_path)
+        parts[0].rename(temp_out_path)
     else:
-        if not _concat(parts, out_path):
+        if not _concat(parts, temp_out_path):
             for t in tmp_parts:
                 try: t.unlink(missing_ok=True)
                 except Exception: pass
+            # Cleanup temp directory
+            try: temp_dir.rmdir()
+            except Exception: pass
             return jsonify(ok=False, error="Concat failed"), 500
 
     # Cleanup temps
     for t in tmp_parts:
         try: t.unlink(missing_ok=True)
         except Exception: pass
+    
+    # Move final video from temp directory to output directory
+    try:
+        # Use shutil.move instead of rename for cross-device compatibility
+        shutil.move(str(temp_out_path), str(out_path))
+        # Remove temporary directory after successful move
+        try: temp_dir.rmdir()
+        except Exception: pass
+    except Exception as e:
+        # Cleanup on failure
+        try: temp_out_path.unlink(missing_ok=True)
+        except Exception: pass
+        try: temp_dir.rmdir()
+        except Exception: pass
+        return jsonify(ok=False, error=f"Failed to move video to output directory: {str(e)}"), 500
 
     try:
         rel_url = f"{day}/{out_name}"

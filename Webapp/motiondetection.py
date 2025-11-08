@@ -33,8 +33,8 @@ from config import config
 CAMERA = config.camera
 MEDIAMTX_RECORD_DIR = config.media_dir
 CAMERA_DIR = (MEDIAMTX_RECORD_DIR / CAMERA)
-OUTPUT_DIR = config.output_dir
-STATE_FILE = OUTPUT_DIR.parent / f".motion_state_{CAMERA}.json"
+OUTPUT_DIR = config.output_dir / CAMERA
+STATE_FILE = Path(f".motion_state_{CAMERA}.json")
 
 # Motion detection parameters
 SAMPLE_FPS = config.sample_fps

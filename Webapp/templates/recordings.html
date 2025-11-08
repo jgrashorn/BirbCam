@@ -64,6 +64,7 @@
       {% if selected_url %}
       <video id="player" controls playsinline class="player-video" src="{{ selected_url }}"></video>
       <div class="row">
+        <a class="btn" href="/camera/{{ cam }}"> 🔴 Live view</a>
         <span class="muted">Now playing: {{ selected_name }}</span>
       </div>
       {% else %}
