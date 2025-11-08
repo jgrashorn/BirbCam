@@ -40,6 +40,10 @@ sudo -u <user> systemctl --user enable --now pulseaudio.socket pulseaudio.servic
 
 # Server
 
+## Dependencies
+
+libgl: `sudo apt install libgl1`
+
 ## mediamtx
 
 For rtsp-Server
