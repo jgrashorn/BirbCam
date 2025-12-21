@@ -21,6 +21,22 @@ def load_env_file():
                     key, value = line.split('=', 1)
                     os.environ[key] = value
 
+def validate_directories(dirs, create: bool = True) -> bool:
+    """Validate that all required directories exist or can be created."""
+    
+    for directory in dirs:
+        if not directory.exists():
+            if create:
+                try:
+                    directory.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    print(f"Cannot create directory {directory}: {e}")
+                    return False
+            else:
+                print(f"Directory does not exist: {directory}")
+                return False
+    return True
+
 # Load environment before importing config
 load_env_file()
 
@@ -30,11 +46,11 @@ from config import config
 
 # ---------- CONFIG ----------
 # Use centralized configuration
-CAMERA = config.camera
+CAMERAS = list(config.cameras.keys())
 MEDIAMTX_RECORD_DIR = config.media_dir
-CAMERA_DIR = (MEDIAMTX_RECORD_DIR / CAMERA)
-OUTPUT_DIR = config.output_dir / CAMERA
-STATE_FILE = Path(f".motion_state_{CAMERA}.json")
+CAMERA_DIR = lambda CAMERA: (MEDIAMTX_RECORD_DIR / CAMERA)
+OUTPUT_DIR = lambda CAMERA: config.output_dir / CAMERA
+STATE_FILE = lambda CAMERA: Path(f".motion_state_{CAMERA}.json")
 
 # Motion detection parameters
 SAMPLE_FPS = config.sample_fps
@@ -72,15 +88,16 @@ if not logger.handlers:
     logger.addHandler(h)
 
 # Validate configuration at startup
-try:
-    config.validate_directories(create=True)
-    logger.info(f"Configuration validated successfully for camera: {CAMERA}")
-    logger.info(f"Processing mode: {'FFmpeg preprocessing' if USE_FFMPEG_PREPROCESSING else 'Direct OpenCV'}")
-    logger.info(f"Media directory: {MEDIAMTX_RECORD_DIR}")
-    logger.info(f"Output directory: {OUTPUT_DIR}")
-except Exception as e:
-    logger.error(f"Configuration validation failed: {e}")
-    sys.exit(1)
+for cam in CAMERAS:
+    try:
+        validate_directories([CAMERA_DIR(cam), OUTPUT_DIR(cam)], create=True)
+        logger.info(f"Configuration validated successfully for camera: {cam}")
+        logger.info(f"Processing mode: {'FFmpeg preprocessing' if USE_FFMPEG_PREPROCESSING else 'Direct OpenCV'}")
+        logger.info(f"Media directory: {MEDIAMTX_RECORD_DIR}")
+        logger.info(f"Output directory: {OUTPUT_DIR(cam)}")
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        sys.exit(1)
 
 LOCK_PATH = Path("/tmp/birbcam-motion.lock")
 _lock_fh = None
@@ -110,37 +127,37 @@ def _release_lock():
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
-def load_state() -> Dict:
-    if STATE_FILE.exists():
+def load_state(cam : str) -> Dict:
+    if STATE_FILE(cam).exists():
         try:
-            return json.loads(STATE_FILE.read_text())
+            return json.loads(STATE_FILE(cam).read_text())
         except Exception:
             return {}
     return {}
 
-def save_state(state: Dict):
-    ensure_dir(OUTPUT_DIR)
-    STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True))
+def save_state(cam: str, state: Dict):
+    ensure_dir(OUTPUT_DIR(cam))
+    STATE_FILE(cam).write_text(json.dumps(state, indent=2, sort_keys=True))
 
-def _prune_state(processed: set, produced: set, existing_inputs: set) -> tuple[set, set]:
+def _prune_state(cam: str, processed: set, produced: set, existing_inputs: set) -> tuple[set, set]:
     # Keep only processed input files that still exist
     pruned_processed = {p for p in processed if p in existing_inputs and Path(p).exists()}
     # Keep only produced outputs that still exist in OUTPUT_DIR
-    pruned_produced = {n for n in produced if (OUTPUT_DIR / n).exists()}
+    pruned_produced = {n for n in produced if (OUTPUT_DIR(cam) / n).exists()}
     return pruned_processed, pruned_produced
 
-def list_camera_files() -> List[Path]:
-    if CAMERA_DIR.exists():
-        base = CAMERA_DIR
+def list_camera_files(cam : str) -> List[Path]:
+    if CAMERA_DIR(cam).exists():
+        base = CAMERA_DIR(cam)
         logger.debug(f"Scanning camera dir: {base}")
         files = sorted(base.rglob("*.mp4"), key=lambda p: (p.stat().st_mtime, str(p)))
     else:
         base = MEDIAMTX_RECORD_DIR
-        logger.debug(f"Scanning root dir: {base} (filtering by camera={CAMERA})")
+        logger.debug(f"Scanning root dir: {base} (filtering by camera={cam})")
         files = []
         if base.exists():
             for p in base.rglob("*.mp4"):
-                if CAMERA in p.parts:
+                if cam in p.parts:
                     files.append(p)
             files.sort(key=lambda p: (p.stat().st_mtime, str(p)))
     if MAX_AGE_MIN is not None:
@@ -636,158 +653,164 @@ def process_once():
     t0 = time.time()
     logger.info(f"[timing] === MOTION DETECTION RUN STARTED ===")
     
-    # Setup phase
-    setup_start = time.time()
-    ensure_dir(OUTPUT_DIR)
-    
-    # Clean up old temporary files
+    # Clean up old temporary files once at startup
     if USE_FFMPEG_PREPROCESSING:
         cleanup_old_temp_files()
     
-    state = load_state()
-    processed = set(state.get("processed_files", []))
-    produced = set(state.get("produced_outputs", []))
-    setup_time = time.time() - setup_start
+    for cam in CAMERAS:
+        cam_start = time.time()
+        logger.info(f"[camera] ========== Processing camera: {cam} ==========")
+        
+        # Setup phase for this camera
+        setup_start = time.time()
+        ensure_dir(OUTPUT_DIR(cam))
+        state = load_state(cam)
+        processed = set(state.get("processed_files", []))
+        produced = set(state.get("produced_outputs", []))
+        setup_time = time.time() - setup_start
 
-    # File discovery phase
-    discovery_start = time.time()
-    files = list_camera_files()
-    discovery_time = time.time() - discovery_start
-    logger.info(f"[timing] setup={setup_time:.3f}s, discovery={discovery_time:.3f}s, found {len(files)} file(s)")
+        # File discovery phase
+        discovery_start = time.time()
+        files = list_camera_files(cam=cam)
+        discovery_time = time.time() - discovery_start
+        logger.info(f"[timing] {cam}: setup={setup_time:.3f}s, discovery={discovery_time:.3f}s, found {len(files)} file(s)")
 
-    # Prune state to existing files/outputs right away
-    prune_start = time.time()
-    existing_inputs = set(str(p) for p in files)
-    before_proc, before_prod = len(processed), len(produced)
-    processed, produced = _prune_state(processed, produced, existing_inputs)
-    prune_time = time.time() - prune_start
-    
-    if before_proc != len(processed) or before_prod != len(produced):
-        logger.debug(f"[state] pruned processed {before_proc}->{len(processed)}, produced {before_prod}->{len(produced)}")
-        state["processed_files"] = sorted(processed)
-        state["produced_outputs"] = sorted(produced)
-        save_state(state)
+        # Prune state to existing files/outputs right away
+        prune_start = time.time()
+        existing_inputs = set(str(p) for p in files)
+        before_proc, before_prod = len(processed), len(produced)
+        processed, produced = _prune_state(cam, processed, produced, existing_inputs)
+        prune_time = time.time() - prune_start
+        
+        if before_proc != len(processed) or before_prod != len(produced):
+            logger.debug(f"[state] {cam}: pruned processed {before_proc}->{len(processed)}, produced {before_prod}->{len(produced)}")
+            state["processed_files"] = sorted(processed)
+            state["produced_outputs"] = sorted(produced)
+            save_state(cam, state)
 
-    # Skip files already processed
-    files_to_scan = [p for p in files if str(p) not in processed]
-    if not files_to_scan:
-        total_time = time.time() - t0
-        logger.info(f"[timing] === RUN COMPLETE (no work): {total_time:.3f}s ===")
-        return
+        # Skip files already processed
+        files_to_scan = [p for p in files if str(p) not in processed]
+        if not files_to_scan:
+            cam_time = time.time() - cam_start
+            logger.info(f"[camera] {cam}: no new files to scan (completed in {cam_time:.3f}s)")
+            continue  # ✅ Skip to next camera
 
-    # Cap per run for CPU control
-    files_to_scan = files_to_scan[-MAX_FILES:]
-    logger.info(f"[timing] prune={prune_time:.3f}s, scanning up to {len(files_to_scan)} new file(s)")
+        # Cap per run for CPU control
+        files_to_scan = files_to_scan[-MAX_FILES:]
+        logger.info(f"[timing] {cam}: prune={prune_time:.3f}s, scanning up to {len(files_to_scan)} new file(s)")
 
-    # Pre-compute windows and durations
-    scan_start = time.time()
-    file_info: Dict[Path, Dict] = {}
-    for p in files_to_scan:
-        if not _file_is_stable(p):
-            logger.debug(f"[skip] unstable: {p}")
-            continue
-        try:
-            windows, dur = detect_motion_windows(p)
-            file_info[p] = {"windows": windows, "duration": dur}
-        except Exception as e:
-            logger.exception(f"[error] scanning {p}: {e}")
+        # Pre-compute windows and durations
+        scan_start = time.time()
+        file_info: Dict[Path, Dict] = {}
+        for p in files_to_scan:
+            if not _file_is_stable(p):
+                logger.debug(f"[skip] {cam}: unstable: {p}")
+                continue
+            try:
+                windows, dur = detect_motion_windows(p)
+                file_info[p] = {"windows": windows, "duration": dur}
+            except Exception as e:
+                logger.exception(f"[error] {cam}: scanning {p}: {e}")
 
-    if not file_info:
-        logger.info("[scan] no stable files with data")
-        return
+        if not file_info:
+            cam_time = time.time() - cam_start
+            logger.info(f"[scan] {cam}: no stable files with data (completed in {cam_time:.3f}s)")
+            continue  # ✅ Skip to next camera
 
-    # DO NOT reset processed here
-    # processed = set([])  # REMOVE this line if present
+        # Iterate and export
+        keys = list(file_info.keys())
+        for idx, p in enumerate(keys):
+            info = file_info[p]
+            windows = info["windows"]
+            duration = info["duration"]
+            logger.info(f"[export] {cam}: {p.name}: {len(windows)} window(s)")
 
-    # Iterate and export
-    keys = list(file_info.keys())
-    for idx, p in enumerate(keys):
-        info = file_info[p]
-        windows = info["windows"]
-        duration = info["duration"]
-        logger.info(f"[export] {p.name}: {len(windows)} window(s)")
+            next_p = keys[idx + 1] if idx + 1 < len(keys) else None
+            next_info = file_info.get(next_p) if next_p else None
+            next_windows = list(next_info["windows"]) if next_info else []
 
-        next_p = keys[idx + 1] if idx + 1 < len(keys) else None
-        next_info = file_info.get(next_p) if next_p else None
-        next_windows = list(next_info["windows"]) if next_info else []
+            consumed_next = set()
 
-        consumed_next = set()
+            for wi, (s, e) in enumerate(windows):
+                tail_touch = (duration - e) <= TAIL_NEAR_END
+                head_touch_idx = None
+                if tail_touch and next_p and next_windows:
+                    for nwi, (ns, ne) in enumerate(next_windows):
+                        if ns <= HEAD_NEAR_START:
+                            head_touch_idx = nwi
+                            break
 
-        for wi, (s, e) in enumerate(windows):
-            tail_touch = (duration - e) <= TAIL_NEAR_END
-            head_touch_idx = None
-            if tail_touch and next_p and next_windows:
-                for nwi, (ns, ne) in enumerate(next_windows):
-                    if ns <= HEAD_NEAR_START:
-                        head_touch_idx = nwi
-                        break
+                if head_touch_idx is not None:
+                    base = sanitize_name(p)
+                    stamp = f"{int(time.time())}"
+                    day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
+                    day_dir = OUTPUT_DIR(cam) / day
+                    day_dir.mkdir(parents=True, exist_ok=True)
+                    tmp1 = day_dir / f"._tmp_{base}_{wi}_{stamp}_a.mp4"
+                    tmp2 = day_dir / f"._tmp_{base}_{wi}_{stamp}_b.mp4"
+                    out = day_dir / f"{base}_{wi}_{stamp}_joined.mp4"
+                    logger.debug(f"[join] {cam}: tail->head across files: {p.name} -> {next_p.name}")
 
-            if head_touch_idx is not None:
-                base = sanitize_name(p)
-                stamp = f"{int(time.time())}"
-                day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
-                day_dir = OUTPUT_DIR / day
-                day_dir.mkdir(parents=True, exist_ok=True)
-                tmp1 = day_dir / f"._tmp_{base}_{wi}_{stamp}_a.mp4"
-                tmp2 = day_dir / f"._tmp_{base}_{wi}_{stamp}_b.mp4"
-                out = day_dir / f"{base}_{wi}_{stamp}_joined.mp4"
-                logger.debug(f"[join] tail->head across files: {p.name} -> {next_p.name}")
-
-                ok1 = _run_ffmpeg_trim(p, s, duration, tmp1)
-                ns, ne = next_windows[head_touch_idx]
-                ok2 = _run_ffmpeg_trim(next_p, 0.0, ne, tmp2)
-                if ok1 and ok2:
-                    ok = _ffmpeg_concat([tmp1, tmp2], out)
+                    ok1 = _run_ffmpeg_trim(p, s, duration, tmp1)
+                    ns, ne = next_windows[head_touch_idx]
+                    ok2 = _run_ffmpeg_trim(next_p, 0.0, ne, tmp2)
+                    if ok1 and ok2:
+                        ok = _ffmpeg_concat([tmp1, tmp2], out)
+                        if ok:
+                            logger.info(f"[save] {cam}: {out.name}")
+                            produced.add(out.name)
+                            consumed_next.add(head_touch_idx)
+                    for t in (tmp1, tmp2):
+                        try:
+                            t.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                else:
+                    base = sanitize_name(p)
+                    stamp = f"{int(time.time())}"
+                    day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
+                    day_dir = OUTPUT_DIR(cam) / day
+                    day_dir.mkdir(parents=True, exist_ok=True)
+                    out = day_dir / f"{base}_{wi}_{stamp}.mp4"
+                    if out.name in produced:
+                        logger.debug(f"[dupe] {cam}: {out.name} already produced; skipping")
+                        continue
+                    logger.debug(f"[trim] {cam}: {p.name} [{s:.3f},{e:.3f}] -> {out.name}")
+                    ok = _run_ffmpeg_trim(p, s, e, out)
                     if ok:
-                        logger.info(f"[save] {out.name}")
+                        logger.info(f"[save] {cam}: {out.name}")
                         produced.add(out.name)
-                        consumed_next.add(head_touch_idx)
-                for t in (tmp1, tmp2):
-                    try:
-                        t.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-            else:
-                base = sanitize_name(p)
-                stamp = f"{int(time.time())}"
-                day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
-                day_dir = OUTPUT_DIR / day
-                day_dir.mkdir(parents=True, exist_ok=True)
-                out = day_dir / f"{base}_{wi}_{stamp}.mp4"
-                if out.name in produced:
-                    logger.debug(f"[dupe] {out.name} already produced; skipping")
-                    continue
-                logger.debug(f"[trim] {p.name} [{s:.3f},{e:.3f}] -> {out.name}")
-                ok = _run_ffmpeg_trim(p, s, e, out)
-                if ok:
-                    logger.info(f"[save] {out.name}")
-                    produced.add(out.name)
 
-        if next_p and consumed_next:
-            for nwi in consumed_next:
-                next_windows[nwi] = (-1.0, -1.0)
+            if next_p and consumed_next:
+                for nwi in consumed_next:
+                    next_windows[nwi] = (-1.0, -1.0)
 
-        processed.add(str(p))
-        # Save progress incrementally, but prune first to avoid growth
-        processed, produced = _prune_state(processed, produced, existing_inputs)
-        state["processed_files"] = sorted(processed)
-        state["produced_outputs"] = sorted(produced)
-        save_state(state)
+            processed.add(str(p))
+            # Save progress incrementally, but prune first to avoid growth
+            processed, produced = _prune_state(cam, processed, produced, existing_inputs)
+            state["processed_files"] = sorted(processed)
+            state["produced_outputs"] = sorted(produced)
+            save_state(cam, state)  # ✅ Fixed
 
-    # Final timing summary
+        # Camera timing summary
+        scan_time = time.time() - scan_start
+        cam_total_time = time.time() - cam_start
+        export_time = cam_total_time - scan_time - setup_time - discovery_time - prune_time
+        
+        logger.info(f"[timing] === CAMERA {cam} COMPLETE ===")
+        logger.info(f"[timing] {cam} PHASE BREAKDOWN:")
+        logger.info(f"  Setup: {setup_time:.3f}s ({setup_time/cam_total_time*100:.1f}%)")
+        logger.info(f"  File discovery: {discovery_time:.3f}s ({discovery_time/cam_total_time*100:.1f}%)")
+        logger.info(f"  State pruning: {prune_time:.3f}s ({prune_time/cam_total_time*100:.1f}%)")
+        logger.info(f"  Motion scanning: {scan_time:.3f}s ({scan_time/cam_total_time*100:.1f}%)")
+        logger.info(f"  Export/FFmpeg: {export_time:.3f}s ({export_time/cam_total_time*100:.1f}%)")
+        logger.info(f"  CAMERA TOTAL: {cam_total_time:.3f}s")
+        logger.info(f"[done] {cam}: processed {len(keys)} file(s) successfully")
+
+    # Overall timing summary
     total_time = time.time() - t0
-    scan_time = time.time() - scan_start if 'scan_start' in locals() else 0
-    export_time = total_time - scan_time - setup_time - discovery_time - prune_time
-    
-    logger.info(f"[timing] === RUN COMPLETE ===")
-    logger.info(f"[timing] PHASE BREAKDOWN:")
-    logger.info(f"  Setup: {setup_time:.3f}s ({setup_time/total_time*100:.1f}%)")
-    logger.info(f"  File discovery: {discovery_time:.3f}s ({discovery_time/total_time*100:.1f}%)")
-    logger.info(f"  State pruning: {prune_time:.3f}s ({prune_time/total_time*100:.1f}%)")
-    logger.info(f"  Motion scanning: {scan_time:.3f}s ({scan_time/total_time*100:.1f}%)")
-    logger.info(f"  Export/FFmpeg: {export_time:.3f}s ({export_time/total_time*100:.1f}%)")
-    logger.info(f"  TOTAL: {total_time:.3f}s")
-    logger.info(f"[done] processed {len(locals().get('keys', []))} file(s) successfully")
+    logger.info(f"[timing] === ALL CAMERAS COMPLETE ===")
+    logger.info(f"[timing] TOTAL RUNTIME: {total_time:.3f}s for {len(CAMERAS)} camera(s)")
 
 if __name__ == "__main__":
     _acquire_single_instance_or_exit()

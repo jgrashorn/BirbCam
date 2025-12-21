@@ -70,7 +70,7 @@ Description=BirbCam motion extraction
 Type=oneshot
 User=birb
 Group=birb
-WorkingDirectory=/home/birb/BirbCam
+WorkingDirectory=/home/birb/BirbCam/Webapp/
 ExecStart=/home/birb/BirbCam/Webapp/.venv/bin/python /home/birb/BirbCam/Webapp/motiondetection.py
 ```
 

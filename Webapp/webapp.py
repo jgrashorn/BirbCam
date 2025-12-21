@@ -412,6 +412,8 @@ def system_settings():
 @app.route('/api/system/cameras', methods=['POST'])
 def api_add_camera():
     """Add a new camera to cameras.json."""
+    global cameras, camera_endpoints, config
+    
     try:
         data = request.get_json()
         if not data:
@@ -460,15 +462,16 @@ def api_add_camera():
         # Send server settings to camera
         result = set_camera_server_config(camera_name, server_settings)
         
-        if result.get("status") != "ok":
-            logger.warning(f"Failed to send server settings to camera: {result.get('message')}")
+        # if result.get("status") != "ok":
+            # logger.warning(f"Failed to send server settings to camera: {result.get('message')}")
             # Continue anyway - camera might pick it up later
         
         # Reload config module
         from importlib import reload
         import config as config_module
         reload(config_module)
-        global config
+        
+        # Update the global config reference
         config = config_module.config
         
         return jsonify({
@@ -484,6 +487,8 @@ def api_add_camera():
 @app.route('/api/system/cameras/<cam_name>', methods=['DELETE'])
 def api_delete_camera(cam_name):
     """Delete a camera from cameras.json."""
+    global cameras, camera_endpoints, config
+    
     try:
         # Load current cameras.json
         cameras_json_path = Path(__file__).parent / "cameras.json"
@@ -512,7 +517,8 @@ def api_delete_camera(cam_name):
         from importlib import reload
         import config as config_module
         reload(config_module)
-        global config
+        
+        # Update the global config reference
         config = config_module.config
         
         return jsonify({"status": "ok", "message": f"Camera '{cam_name}' deleted successfully"})
