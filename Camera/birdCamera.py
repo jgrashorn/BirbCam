@@ -4,14 +4,17 @@ import socket
 import threading
 import time
 
-from picamera2.outputs import FileOutput
-
 logger = logging.getLogger(__name__)
 
 # Global config state
 _config = None
 _config_lock = threading.Lock()
 _config_changed = threading.Event()
+
+# Global server config state
+_server_config = None
+_server_config_lock = threading.Lock()
+_server_config_changed = threading.Event()
 
 def readConfig():
     global _config
@@ -58,6 +61,64 @@ def waitForConfigChange(timeout=None):
         _config_changed.clear()
     return result
 
+def readServerConfig():
+    """Read server configuration from server_settings.txt"""
+    global _server_config
+    try:
+        with open("server_settings.txt") as f:
+            configData = f.read()
+        
+        parsedConfig = json.loads(configData)
+        
+        with _server_config_lock:
+            _server_config = parsedConfig
+        
+        logger.info(f"Server configuration loaded: {parsedConfig}")
+        return parsedConfig
+    except FileNotFoundError:
+        logger.warning("server_settings.txt not found, using defaults")
+        default_config = {
+            "serverIP": "192.168.178.38",
+            "name": "camera",
+            "rtspPort": 8554,
+            "settingsPort": 5005
+        }
+        with _server_config_lock:
+            _server_config = default_config
+        return default_config
+    except Exception as e:
+        logger.error(f"Failed to read server config: {e}")
+        return {}
+
+def writeServerConfig(config):
+    """Write server configuration to file and signal change."""
+    global _server_config
+    try:
+        with open("server_settings.txt", "w") as f:
+            json.dump(config, f, indent=4)
+        
+        with _server_config_lock:
+            _server_config = config.copy()
+        
+        _server_config_changed.set()
+        logger.info(f"Server configuration updated and saved: {config}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to write server config: {e}")
+        return False
+
+def getCurrentServerConfig():
+    """Get current server configuration safely."""
+    with _server_config_lock:
+        return _server_config.copy() if _server_config else {}
+
+def waitForServerConfigChange(timeout=None):
+    """Wait for server configuration change event."""
+    result = _server_config_changed.wait(timeout)
+    if result:
+        _server_config_changed.clear()
+    return result
+
 def handleSettingsClient(client_socket, address):
     """Handle TCP client for settings changes."""
     logger.info(f"Settings client connected from {address}")
@@ -75,6 +136,12 @@ def handleSettingsClient(client_socket, address):
                 # Send current configuration
                 config = getCurrentConfig()
                 response = json.dumps({"status": "ok", "config": config})
+                client_socket.send((response + "\n").encode('utf-8'))
+                
+            elif data == "GET_SERVER_CONFIG":
+                # Send current server configuration
+                server_config = getCurrentServerConfig()
+                response = json.dumps({"status": "ok", "config": server_config})
                 client_socket.send((response + "\n").encode('utf-8'))
                 
             elif data.startswith("SET_CONFIG:"):
@@ -101,6 +168,33 @@ def handleSettingsClient(client_socket, address):
                             response = json.dumps({"status": "error", "message": "Failed to save configuration"})
                     else:
                         response = json.dumps({"status": "error", "message": f"Missing required configuration keys: {', '.join(missing_keys)}"})
+                        
+                except json.JSONDecodeError as e:
+                    response = json.dumps({"status": "error", "message": f"Invalid JSON: {str(e)}"})
+                except Exception as e:
+                    response = json.dumps({"status": "error", "message": f"Error: {str(e)}"})
+                
+                client_socket.send((response + "\n").encode('utf-8'))
+                
+            elif data.startswith("SET_SERVER_CONFIG:"):
+                # Set new server configuration
+                try:
+                    config_json = data[18:]  # Remove "SET_SERVER_CONFIG:" prefix
+                    new_server_config = json.loads(config_json)
+                    
+                    # Validate required keys
+                    required_keys = ["serverIP", "name", "rtspPort", "settingsPort"]
+                    missing_keys = [key for key in required_keys if key not in new_server_config]
+                    
+                    logger.info(f"Validating new server configuration: {new_server_config}")
+                    
+                    if not missing_keys:
+                        if writeServerConfig(new_server_config):
+                            response = json.dumps({"status": "ok", "message": "Server configuration updated"})
+                        else:
+                            response = json.dumps({"status": "error", "message": "Failed to save server configuration"})
+                    else:
+                        response = json.dumps({"status": "error", "message": f"Missing required server configuration keys: {', '.join(missing_keys)}"})
                         
                 except json.JSONDecodeError as e:
                     response = json.dumps({"status": "error", "message": f"Invalid JSON: {str(e)}"})

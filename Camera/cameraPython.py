@@ -33,10 +33,14 @@ def runCamera():
                         level=logging.INFO,
                         datefmt='%Y-%m-%d %H:%M:%S')
     
+    # Load server configuration first
+    server_config = birdCamera.readServerConfig()
+    
+    # Load camera configuration
     config = birdCamera.readConfig()
     
     # Start settings server
-    settings_port = config.get("settingsPort", 5005)
+    settings_port = server_config.get("settingsPort", 5005)
     birdCamera.startSettingsServer(settings_port)
     
     lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
@@ -58,7 +62,7 @@ def runCamera():
     streamOutput = None
     streaming = {"running": False}
 
-    rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+    rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
 
     # Replace pgrep with a /proc scan (more reliable, no shell)
     def _find_ffmpeg_pid(target_url: str):
@@ -88,9 +92,9 @@ def runCamera():
         return _find_ffmpeg_pid(rtsp_url) is None
 
     def start_stream():
-        nonlocal encoder, streamOutput
+        nonlocal encoder, streamOutput, rtsp_url
         try:
-            logger.info("Starting RTSP encoder/output")
+            logger.info(f"Starting RTSP encoder/output to {rtsp_url}")
             enc = H264Encoder(2000000)
             try:
                 enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
@@ -150,8 +154,9 @@ def runCamera():
             streaming["running"] = False
 
     def stream_manager():
-        host = config["serverIP"]
-        port = config["rtspPort"]
+        nonlocal rtsp_url, server_config
+        host = server_config["serverIP"]
+        port = server_config["rtspPort"]
         dead_ticks = 0
         down_ticks = 0
         up_ticks = 0
@@ -159,6 +164,36 @@ def runCamera():
         DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
         UP_THRESH = 2     # require 2 consecutive successes before start
         while True:
+            # Check for server configuration changes
+            if birdCamera.waitForServerConfigChange(timeout=0.1):
+                logger.info("Server configuration changed, reloading...")
+                new_server_config = birdCamera.getCurrentServerConfig()
+                
+                # If server IP, port, or name changed, restart stream
+                if (server_config["serverIP"] != new_server_config["serverIP"] or
+                    server_config["rtspPort"] != new_server_config["rtspPort"] or
+                    server_config["name"] != new_server_config["name"]):
+                    
+                    logger.info("Server connection details changed, restarting stream...")
+                    with encoder_lock:
+                        if streaming["running"]:
+                            stop_stream()
+                    
+                    # Update server config and rtsp_url
+                    server_config = new_server_config
+                    rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
+                    host = server_config["serverIP"]
+                    port = server_config["rtspPort"]
+                    
+                    logger.info(f"New RTSP URL: {rtsp_url}")
+                    
+                    # Reset counters
+                    dead_ticks = 0
+                    down_ticks = 0
+                    up_ticks = 0
+                else:
+                    server_config = new_server_config
+            
             up = _rtsp_up(host, port)
             with encoder_lock:
                 if streaming["running"]:

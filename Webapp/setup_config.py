@@ -22,7 +22,7 @@ def check_env_file():
     print(f"✅ Found .env file: {env_file}")
     
     # Check if required variables are set
-    required_vars = ['BIRBCAM_CAMERA', 'BIRBCAM_MEDIA_DIR', 'BIRBCAM_OUTPUT_DIR']
+    required_vars = ['BIRBCAM_CAMERAS_JSON', 'BIRBCAM_MEDIA_DIR', 'BIRBCAM_OUTPUT_DIR']
     missing_vars = []
     
     with open(env_file, 'r') as f:
@@ -57,7 +57,7 @@ def load_and_test_config():
         print("✅ Configuration module imported successfully")
         
         # Test key configuration values
-        print(f"   Camera: {config.camera}")
+        print(f"   Cameras: {config.cameras}")
         print(f"   Media directory: {config.media_dir}")
         print(f"   Output directory: {config.output_dir}")
         print(f"   Log level: {config.log_level}")

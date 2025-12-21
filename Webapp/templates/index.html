@@ -9,7 +9,10 @@
   {% block title %}BirbCam — Dashboard{% endblock %}
 
   {% block content %}
-    <h2>Available cameras</h2>
+    <div class="dashboard-header">
+      <h2>Available cameras</h2>
+      <a class="btn btn-primary" href="{{ url_for('system_settings') }}">⚙️ System Settings</a>
+    </div>
     <ul class="list">
       {% for cam, url in cameras.items() %}
         <li>

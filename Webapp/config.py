@@ -8,28 +8,48 @@ This module handles environment variables and provides type-safe configuration a
 import os
 from pathlib import Path
 from typing import Optional, Union
+import json
 
 class BirbCamConfig:
     """Centralized configuration for BirbCam system."""
     
     def __init__(self, camera: Optional[str] = None):
         """Initialize configuration, optionally overriding camera name."""
-        self._camera = camera or os.environ.get("BIRBCAM_CAMERA", "garten")
-        
+        self._cameras_json = os.environ.get("BIRBCAM_CAMERAS_JSON", "cameras.json")
+        with open(self._cameras_json, 'r') as f:
+            self._cameras = json.load(f)
+
+        if camera:
+            if camera not in self._cameras:
+                raise ValueError(f"Camera '{camera}' not found in cameras.json")
+            self._cameras = self._cameras[camera]
     # ========================================================================
     # Core System Settings
     # ========================================================================
     
     @property
-    def camera(self) -> str:
+    def cameras(self) -> str:
         """Camera identifier (should match MediaMTX stream path)."""
-        return self._camera
+        return self._cameras
     
     @property
     def log_level(self) -> str:
         """Logging level for motion detection script."""
         return os.environ.get("BIRBCAM_LOG", "DEBUG").upper()
+
+    # ============================================================================
+    # Stream and Server Settings
+    # ============================================================================
     
+    @property
+    def hlspath(self) -> str:
+        """HLS stream base path."""
+        return os.environ.get("BIRBCAM_HLS_PORT", "8888")
+    
+    @property
+    def hlsip(self) -> str:
+        """HLS stream server IP address."""
+        return os.environ.get("BIRBCAM_HLS_IP", "localhost")
     # ========================================================================
     # Directory Paths
     # ========================================================================
@@ -43,7 +63,7 @@ class BirbCamConfig:
     @property
     def output_dir(self) -> Path:
         """Directory where processed motion clips are stored."""
-        default = f"/home/birb/BirbCam/Webapp/recordings/{self.camera}"
+        default = f"/home/birb/BirbCam/Webapp/recordings"
         return Path(os.environ.get("BIRBCAM_OUTPUT_DIR", default))
     
     @property
@@ -52,15 +72,15 @@ class BirbCamConfig:
         default = "/tmp/birbcam"
         return Path(os.environ.get("BIRBCAM_TEMP_DIR", default))
     
-    @property
-    def camera_dir(self) -> Path:
-        """Camera-specific recording directory."""
-        return self.media_dir / self.camera
+    # @property
+    # def camera_dir(self) -> Path:
+    #     """Camera-specific recording directory."""
+    #     return self.media_dir
     
-    @property
-    def state_file(self) -> Path:
-        """Motion detection state file."""
-        return self.output_dir.parent / f".motion_state_{self.camera}.json"
+    # @property
+    # def state_file(self) -> Path:
+    #     """Motion detection state file."""
+    #     return self.output_dir.parent / f".motion_state_{self.camera}.json"
     
     # ========================================================================
     # Motion Detection Parameters
@@ -167,27 +187,27 @@ class BirbCamConfig:
     # Utility Methods
     # ========================================================================
     
-    def validate_directories(self, create: bool = True) -> bool:
-        """Validate that all required directories exist or can be created."""
-        dirs = [self.media_dir, self.output_dir, self.temp_dir]
+    # def validate_directories(self, create: bool = True) -> bool:
+    #     """Validate that all required directories exist or can be created."""
+    #     dirs = [self.media_dir, self.output_dir, self.temp_dir]
         
-        for directory in dirs:
-            if not directory.exists():
-                if create:
-                    try:
-                        directory.mkdir(parents=True, exist_ok=True)
-                    except Exception as e:
-                        print(f"Cannot create directory {directory}: {e}")
-                        return False
-                else:
-                    print(f"Directory does not exist: {directory}")
-                    return False
-        return True
+    #     for directory in dirs:
+    #         if not directory.exists():
+    #             if create:
+    #                 try:
+    #                     directory.mkdir(parents=True, exist_ok=True)
+    #                 except Exception as e:
+    #                     print(f"Cannot create directory {directory}: {e}")
+    #                     return False
+    #             else:
+    #                 print(f"Directory does not exist: {directory}")
+    #                 return False
+    #     return True
     
     def get_summary(self) -> dict:
         """Get a summary of current configuration values."""
         return {
-            "camera": self.camera,
+            "camera": self.cameras,
             "log_level": self.log_level,
             "media_dir": str(self.media_dir),
             "output_dir": str(self.output_dir),
@@ -215,6 +235,6 @@ config = BirbCamConfig()
 # Convenience functions for backward compatibility
 def get_config(camera: Optional[str] = None) -> BirbCamConfig:
     """Get configuration instance, optionally for a specific camera."""
-    if camera and camera != config.camera:
+    if camera and camera != config.cameras:
         return BirbCamConfig(camera)
     return config
