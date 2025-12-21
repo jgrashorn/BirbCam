@@ -88,7 +88,7 @@ def handleSettingsClient(client_socket, address):
                         new_config["port"] = new_config["settingsPort"]
                     
                     # Validate configuration keys (basic validation)
-                    required_keys = ["serverIP", "name", "rtspPort", "width", "height"]
+                    required_keys = ["width", "height"]
                     missing_keys = [key for key in required_keys if key not in new_config]
 
                     logger.info(f"Validating new configuration: {new_config}")
