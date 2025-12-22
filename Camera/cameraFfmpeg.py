@@ -5,6 +5,7 @@ import socket
 import threading
 import subprocess
 import signal
+import re
 
 import birdCamera
 
@@ -17,6 +18,36 @@ def _rtsp_up(host, port, timeout=1.0):
             return True
     except OSError:
         return False
+
+def detect_camera_capabilities(device):
+    """Detect camera supported resolutions and framerates."""
+    try:
+        result = subprocess.run(
+            ['v4l2-ctl', '--device', device, '--list-formats-ext'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Camera capabilities for {device}:")
+            logger.info(result.stdout)
+            
+            # Parse for MJPEG resolutions
+            lines = result.stdout.split('\n')
+            for i, line in enumerate(lines):
+                if 'MJPEG' in line or 'Motion-JPEG' in line:
+                    logger.info("MJPEG format found, listing resolutions:")
+                    for j in range(i+1, min(i+20, len(lines))):
+                        if 'Size:' in lines[j] or 'Interval:' in lines[j]:
+                            logger.info(lines[j])
+        else:
+            logger.warning(f"Could not detect camera capabilities: {result.stderr}")
+            
+    except FileNotFoundError:
+        logger.warning("v4l2-ctl not found, install v4l-utils to detect camera capabilities")
+    except Exception as e:
+        logger.error(f"Error detecting camera capabilities: {e}")
 
 def runCamera():
     """Main camera streaming function using FFmpeg with USB camera."""
@@ -40,6 +71,13 @@ def runCamera():
     settings_port = server_config.get("settingsPort", 5005)
     birdCamera.startSettingsServer(settings_port)
 
+    # Video device - adjust if needed
+    video_device = config.get("videoDevice", "/dev/video0")
+    
+    # Log camera capabilities on startup
+    logger.info(f"Initializing camera on {video_device}")
+    detect_camera_capabilities(video_device)
+
     # State management
     ffmpeg_process = None
     process_lock = threading.Lock()
@@ -51,31 +89,33 @@ def runCamera():
     
     def build_ffmpeg_command(cfg, srv_cfg):
         """Build FFmpeg command based on current configuration."""
-        width = cfg.get("width", 1920)
-        height = cfg.get("height", 1080)
-        framerate = cfg.get("framerate", 25)
+        width = cfg.get("width", 1280)
+        height = cfg.get("height", 960)
+        framerate = cfg.get("framerate", 15)
         bitrate = cfg.get("bitrate", "2000k")
         preset = cfg.get("preset", "ultrafast")
         
         rtsp_url = f'rtsp://{srv_cfg["serverIP"]}:{srv_cfg["rtspPort"]}/{srv_cfg["name"]}'
         
-        # FFmpeg command for USB camera with audio
+        # FFmpeg command for USB camera (video only, no audio)
         cmd = [
             'ffmpeg',
             '-f', 'v4l2',
-            '-input_format', 'mjpeg',  # Many USB cameras support MJPEG
+            '-input_format', 'mjpeg',
             '-video_size', f'{width}x{height}',
             '-framerate', str(framerate),
             '-i', video_device,
-            '-f', 'alsa',  # Audio from USB camera mic
-            '-i', 'hw:1,0',  # Adjust audio device as needed (hw:CARD,DEVICE)
+            # Video encoding options
             '-c:v', 'libx264',
             '-preset', preset,
             '-b:v', bitrate,
             '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
+            '-colorspace', 'bt709',
+            '-color_range', 'tv',
+            # Error recovery options
+            '-err_detect', 'ignore_err',
+            '-max_delay', '500000',
+            # RTSP output
             '-f', 'rtsp',
             '-rtsp_transport', 'tcp',
             rtsp_url
