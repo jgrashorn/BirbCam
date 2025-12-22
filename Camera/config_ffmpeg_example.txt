@@ -1,0 +1,8 @@
+{
+    "width": 1920,
+    "height": 1080,
+    "framerate": 25,
+    "bitrate": "2000k",
+    "preset": "ultrafast",
+    "videoDevice": "/dev/video0"
+}
