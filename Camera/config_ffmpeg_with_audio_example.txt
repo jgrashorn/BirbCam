@@ -5,5 +5,7 @@
     "bitrate": "3000k",
     "preset": "ultrafast",
     "inputFormat": "mjpeg",
-    "videoDevice": "/dev/video0"
+    "videoDevice": "/dev/video0",
+    "enableAudio": true,
+    "audioDevice": "hw:0,0"
 }

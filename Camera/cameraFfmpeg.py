@@ -31,16 +31,20 @@ def detect_camera_capabilities(device):
         
         if result.returncode == 0:
             logger.info(f"Camera capabilities for {device}:")
+            logger.info("="*60)
             logger.info(result.stdout)
+            logger.info("="*60)
             
-            # Parse for MJPEG resolutions
+            # Parse and highlight YUYV/YUY2 formats
             lines = result.stdout.split('\n')
             for i, line in enumerate(lines):
-                if 'MJPEG' in line or 'Motion-JPEG' in line:
-                    logger.info("MJPEG format found, listing resolutions:")
-                    for j in range(i+1, min(i+20, len(lines))):
-                        if 'Size:' in lines[j] or 'Interval:' in lines[j]:
+                if 'YUYV' in line or 'YUY2' in line or 'YUYV 4:2:2' in line:
+                    logger.info("\n>>> YUYV format found, available resolutions:")
+                    for j in range(i+1, min(i+30, len(lines))):
+                        if lines[j].strip() and not lines[j].strip().startswith('['):
                             logger.info(lines[j])
+                        if j < len(lines)-1 and lines[j+1].strip().startswith('['):
+                            break
         else:
             logger.warning(f"Could not detect camera capabilities: {result.stderr}")
             
@@ -48,6 +52,43 @@ def detect_camera_capabilities(device):
         logger.warning("v4l2-ctl not found, install v4l-utils to detect camera capabilities")
     except Exception as e:
         logger.error(f"Error detecting camera capabilities: {e}")
+
+def set_camera_format(device, width, height, framerate, pixel_format='YUYV'):
+    """Try to set camera format using v4l2-ctl before FFmpeg starts."""
+    try:
+        logger.info(f"Attempting to set camera format: {width}x{height} @ {framerate}fps, format={pixel_format}")
+        
+        # Set pixel format
+        result = subprocess.run(
+            ['v4l2-ctl', '--device', device, '--set-fmt-video',
+             f'width={width},height={height},pixelformat={pixel_format}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Format set result: {result.stdout}")
+        else:
+            logger.warning(f"Could not set format: {result.stderr}")
+        
+        # Set framerate
+        result = subprocess.run(
+            ['v4l2-ctl', '--device', device, '--set-parm', f'{framerate}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Framerate set result: {result.stdout}")
+        else:
+            logger.warning(f"Could not set framerate: {result.stderr}")
+            
+    except FileNotFoundError:
+        logger.warning("v4l2-ctl not found, skipping pre-configuration")
+    except Exception as e:
+        logger.error(f"Error setting camera format: {e}")
 
 def runCamera():
     """Main camera streaming function using FFmpeg with USB camera."""
@@ -89,37 +130,60 @@ def runCamera():
     
     def build_ffmpeg_command(cfg, srv_cfg):
         """Build FFmpeg command based on current configuration."""
-        width = cfg.get("width", 1280)
-        height = cfg.get("height", 960)
-        framerate = cfg.get("framerate", 15)
-        bitrate = cfg.get("bitrate", "2000k")
+        width = cfg.get("width", 1920)
+        height = cfg.get("height", 1080)
+        framerate = cfg.get("framerate", 25)
+        bitrate = cfg.get("bitrate", "3000k")
         preset = cfg.get("preset", "ultrafast")
+        input_format = cfg.get("inputFormat", "mjpeg")  # mjpeg or yuyv422
+        enable_audio = cfg.get("enableAudio", False)
+        audio_device = cfg.get("audioDevice", "hw:1,0")  # ALSA device for audio
         
         rtsp_url = f'rtsp://{srv_cfg["serverIP"]}:{srv_cfg["rtspPort"]}/{srv_cfg["name"]}'
         
-        # FFmpeg command for USB camera (video only, no audio)
+        # Pre-configure camera using v4l2-ctl for better control
+        pixel_fmt = 'YUYV' if 'yuyv' in input_format.lower() else 'MJPG'
+        set_camera_format(video_device, width, height, framerate, pixel_fmt)
+        
+        # Build FFmpeg command
         cmd = [
             'ffmpeg',
             '-f', 'v4l2',
-            '-input_format', 'mjpeg',
+            '-input_format', input_format,
             '-video_size', f'{width}x{height}',
             '-framerate', str(framerate),
             '-i', video_device,
-            # Video encoding options
+        ]
+        
+        # Add audio input if enabled
+        if enable_audio:
+            cmd.extend([
+                '-f', 'alsa',
+                '-i', audio_device,
+            ])
+        
+        # Video encoding options
+        cmd.extend([
             '-c:v', 'libx264',
             '-preset', preset,
             '-b:v', bitrate,
             '-pix_fmt', 'yuv420p',
-            '-colorspace', 'bt709',
-            '-color_range', 'tv',
-            # Error recovery options
-            '-err_detect', 'ignore_err',
-            '-max_delay', '500000',
-            # RTSP output
+        ])
+        
+        # Audio encoding options if enabled
+        if enable_audio:
+            cmd.extend([
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-ar', '44100',
+            ])
+        
+        # RTSP output
+        cmd.extend([
             '-f', 'rtsp',
             '-rtsp_transport', 'tcp',
             rtsp_url
-        ]
+        ])
         
         return cmd, rtsp_url
     
@@ -244,7 +308,10 @@ def runCamera():
                     config.get("height") != new_config.get("height") or
                     config.get("framerate") != new_config.get("framerate") or
                     config.get("bitrate") != new_config.get("bitrate") or
-                    config.get("preset") != new_config.get("preset")):
+                    config.get("preset") != new_config.get("preset") or
+                    config.get("inputFormat") != new_config.get("inputFormat") or
+                    config.get("enableAudio") != new_config.get("enableAudio") or
+                    config.get("audioDevice") != new_config.get("audioDevice")):
                     
                     logger.info("Video settings changed, restarting stream...")
                     with process_lock:
