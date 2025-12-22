@@ -252,6 +252,18 @@ def runCamera():
         
         return cmd, rtsp_url
     
+    def log_ffmpeg_output(proc):
+        """Log FFmpeg stderr output in real-time."""
+        try:
+            for line in iter(proc.stderr.readline, b''):
+                if line:
+                    msg = line.decode('utf-8', errors='ignore').strip()
+                    # Filter out excessive frame status lines
+                    if msg and not msg.startswith('frame='):
+                        logger.info(f"[FFmpeg] {msg}")
+        except Exception as e:
+            logger.error(f"Error reading FFmpeg output: {e}")
+    
     def start_stream(cfg, srv_cfg):
         """Start FFmpeg streaming process."""
         nonlocal ffmpeg_process
@@ -269,6 +281,13 @@ def runCamera():
                 stdin=subprocess.DEVNULL,
                 preexec_fn=os.setsid  # Create new process group for clean termination
             )
+            
+            # Start thread to log FFmpeg output
+            threading.Thread(
+                target=log_ffmpeg_output, 
+                args=(ffmpeg_process,), 
+                daemon=True
+            ).start()
             
             streaming["running"] = True
             logger.info(f"FFmpeg process started with PID {ffmpeg_process.pid}")
