@@ -90,6 +90,42 @@ def set_camera_format(device, width, height, framerate, pixel_format='YUYV'):
     except Exception as e:
         logger.error(f"Error setting camera format: {e}")
 
+def detect_audio_capabilities(device):
+    """Detect audio device capabilities using arecord."""
+    try:
+        logger.info(f"Detecting audio capabilities for {device}:")
+        
+        # Get device info
+        result = subprocess.run(
+            ['arecord', '-L'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            logger.info("Available ALSA devices:")
+            logger.info(result.stdout)
+        
+        # Try to get hardware parameters
+        result = subprocess.run(
+            ['arecord', '-D', device, '--dump-hw-params', '-d', '1'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            logger.info(f"Hardware parameters for {device}:")
+            logger.info(result.stderr)  # arecord outputs to stderr
+        else:
+            logger.warning(f"Could not get hardware parameters: {result.stderr}")
+            
+    except FileNotFoundError:
+        logger.warning("arecord not found, skipping audio detection")
+    except Exception as e:
+        logger.error(f"Error detecting audio capabilities: {e}")
+
 def runCamera():
     """Main camera streaming function using FFmpeg with USB camera."""
     
@@ -118,6 +154,12 @@ def runCamera():
     # Log camera capabilities on startup
     logger.info(f"Initializing camera on {video_device}")
     detect_camera_capabilities(video_device)
+    
+    # If audio is enabled in config, detect audio capabilities too
+    if config.get("enableAudio"):
+        audio_device = config.get("audioDevice", "hw:0,0")
+        logger.info(f"Audio enabled, detecting capabilities for {audio_device}")
+        detect_audio_capabilities(audio_device)
 
     # State management
     ffmpeg_process = None
@@ -137,7 +179,10 @@ def runCamera():
         preset = cfg.get("preset", "ultrafast")
         input_format = cfg.get("inputFormat", "mjpeg")  # mjpeg or yuyv422
         enable_audio = cfg.get("enableAudio", False)
-        audio_device = cfg.get("audioDevice", "hw:1,0")  # ALSA device for audio
+        audio_device = cfg.get("audioDevice", "hw:0,0")  # ALSA device for audio
+        audio_channels = cfg.get("audioChannels", 1)  # 1 for mono, 2 for stereo
+        audio_sample_rate = cfg.get("audioSampleRate", 16000)
+        audio_buffer_size = cfg.get("audioBufferSize", 4096)  # ALSA buffer size
         
         rtsp_url = f'rtsp://{srv_cfg["serverIP"]}:{srv_cfg["rtspPort"]}/{srv_cfg["name"]}'
         
@@ -152,30 +197,50 @@ def runCamera():
             '-input_format', input_format,
             '-video_size', f'{width}x{height}',
             '-framerate', str(framerate),
+            '-thread_queue_size', '512',  # Video input buffer
             '-i', video_device,
         ]
         
         # Add audio input if enabled
         if enable_audio:
+            # Use plughw instead of hw for better compatibility
+            alsa_device = audio_device
+            if audio_device.startswith('hw:'):
+                # Try plughw for automatic sample rate/format conversion
+                alsa_device = 'plughw:' + audio_device[3:]
+                logger.info(f"Using {alsa_device} (plugin device) for better compatibility")
+            
             cmd.extend([
                 '-f', 'alsa',
-                '-i', audio_device,
+                '-thread_queue_size', '2048',  # Larger buffer for stability
+                '-channels', str(audio_channels),
+                '-sample_rate', str(audio_sample_rate),
+                '-i', alsa_device,
             ])
         
         # Video encoding options
         cmd.extend([
             '-c:v', 'libx264',
             '-preset', preset,
+            '-tune', 'zerolatency',  # Minimize encoding delay
             '-b:v', bitrate,
+            '-maxrate', bitrate,  # Cap bitrate
+            '-bufsize', str(int(bitrate.replace('k', '')) * 2) + 'k',  # Buffer size = 2x bitrate
             '-pix_fmt', 'yuv420p',
+            '-color_range', 'tv',  # Fix color range warning
+            '-colorspace', 'bt709',
+            '-g', str(framerate * 2),  # Keyframe every 2 seconds
+            '-flags', '+low_delay',  # Low delay mode
+            '-fflags', '+nobuffer',  # No buffering
         ])
         
         # Audio encoding options if enabled
         if enable_audio:
             cmd.extend([
                 '-c:a', 'aac',
-                '-b:a', '128k',
-                '-ar', '44100',
+                '-b:a', '32k' if audio_channels == 1 else '64k',  # Lower bitrate for mono
+                # Audio filters to reduce noise
+                '-af', 'highpass=f=200,lowpass=f=3000,volume=2',  # Filter out rumble/hiss, boost volume
             ])
         
         # RTSP output
@@ -311,7 +376,10 @@ def runCamera():
                     config.get("preset") != new_config.get("preset") or
                     config.get("inputFormat") != new_config.get("inputFormat") or
                     config.get("enableAudio") != new_config.get("enableAudio") or
-                    config.get("audioDevice") != new_config.get("audioDevice")):
+                    config.get("audioDevice") != new_config.get("audioDevice") or
+                    config.get("audioChannels") != new_config.get("audioChannels") or
+                    config.get("audioSampleRate") != new_config.get("audioSampleRate") or
+                    config.get("audioBufferSize") != new_config.get("audioBufferSize")):
                     
                     logger.info("Video settings changed, restarting stream...")
                     with process_lock:

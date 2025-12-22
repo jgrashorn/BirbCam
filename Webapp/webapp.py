@@ -1,6 +1,7 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify, url_for, abort
 import os, time, subprocess, socket, json, shutil, hashlib
 from pathlib import Path
+import camera_settings
 
 # Load environment variables from .env file if it exists
 def load_env_file():
@@ -66,25 +67,33 @@ def settings(cam):
     if cam not in cameras:
         return "Camera not found", 404
     
-    # Get current configuration from camera
-    config_response = get_camera_config(cam)
-    if config_response.get("status") == "ok":
-        current_config = config_response.get("config", {})
-    else:
-        current_config = {}
-        error_message = config_response.get("message", "Failed to get configuration")
+    # Get settings metadata (includes current values and UI hints)
+    settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+    
+    if 'error' in settings_data:
+        return render_template('settings.html', 
+                             cam=cam, 
+                             settings={},
+                             error=settings_data['error'])
     
     return render_template('settings.html', 
                          cam=cam, 
-                         config=current_config,
-                         error=config_response.get("message") if config_response.get("status") != "ok" else None)
+                         camera_type=settings_data.get('camera_type', 'unknown'),
+                         settings=settings_data.get('settings', {}),
+                         error=None)
 
 @app.route('/api/settings/<cam>', methods=['GET'])
 def api_get_settings(cam):
     if cam not in cameras:
         return jsonify({"status": "error", "message": "Camera not found"}), 404
     
-    return jsonify(get_camera_config(cam))
+    # Return settings metadata with current values
+    settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+    
+    if 'error' in settings_data:
+        return jsonify({"status": "error", "message": settings_data['error']}), 500
+    
+    return jsonify({"status": "ok", "data": settings_data})
 
 @app.route('/api/settings/<cam>', methods=['POST'])
 def api_set_settings(cam):
@@ -96,12 +105,22 @@ def api_set_settings(cam):
         if not new_config:
             return jsonify({"status": "error", "message": "No configuration provided"}), 400
         
-        result = set_camera_config(cam, new_config)
+        # Validate settings before sending to camera
+        for setting_name, value in new_config.items():
+            is_valid, error_msg = camera_settings.validate_setting(cam, setting_name, value)
+            if not is_valid:
+                return jsonify({
+                    "status": "error", 
+                    "message": f"Invalid value for {setting_name}: {error_msg}"
+                }), 400
         
-        if result.get("status") == "ok":
-            return jsonify(result)
+        # Send to camera
+        result = camera_settings.send_camera_config(cam, new_config)
+        
+        if result[0]:  # success
+            return jsonify({"status": "ok", "message": result[1]})
         else:
-            return jsonify(result), 400
+            return jsonify({"status": "error", "message": result[1]}), 400
             
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
