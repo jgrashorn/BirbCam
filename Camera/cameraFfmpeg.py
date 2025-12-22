@@ -172,17 +172,20 @@ def runCamera():
     
     def build_ffmpeg_command(cfg, srv_cfg):
         """Build FFmpeg command based on current configuration."""
-        width = cfg.get("width", 1920)
-        height = cfg.get("height", 1080)
+        width = cfg.get("width", 1280)
+        height = cfg.get("height", 720)
         framerate = cfg.get("framerate", 25)
-        bitrate = cfg.get("bitrate", "3000k")
+        bitrate = cfg.get("bitrate", "2000k")
+        maxrate = cfg.get("maxrate", "4000k")
+        bufsize = cfg.get("bufsize", "4000k")
+        gop_size = cfg.get("gopSize", 10)
         preset = cfg.get("preset", "ultrafast")
         input_format = cfg.get("inputFormat", "mjpeg")  # mjpeg or yuyv422
         enable_audio = cfg.get("enableAudio", False)
         audio_device = cfg.get("audioDevice", "hw:0,0")  # ALSA device for audio
         audio_channels = cfg.get("audioChannels", 1)  # 1 for mono, 2 for stereo
         audio_sample_rate = cfg.get("audioSampleRate", 16000)
-        audio_buffer_size = cfg.get("audioBufferSize", 4096)  # ALSA buffer size
+        audio_filter = cfg.get("audioFilter", "highpass=f=200,lowpass=f=3000,volume=2")
         
         rtsp_url = f'rtsp://{srv_cfg["serverIP"]}:{srv_cfg["rtspPort"]}/{srv_cfg["name"]}'
         
@@ -197,7 +200,7 @@ def runCamera():
             '-input_format', input_format,
             '-video_size', f'{width}x{height}',
             '-framerate', str(framerate),
-            '-thread_queue_size', '512',  # Video input buffer
+            '-thread_queue_size', '2048',  # Video input buffer
             '-i', video_device,
         ]
         
@@ -224,12 +227,10 @@ def runCamera():
             '-preset', preset,
             '-tune', 'zerolatency',  # Minimize encoding delay
             '-b:v', bitrate,
-            '-maxrate', bitrate,  # Cap bitrate
-            '-bufsize', str(int(bitrate.replace('k', '')) * 2) + 'k',  # Buffer size = 2x bitrate
+            '-maxrate', maxrate,  # Maximum bitrate
+            '-bufsize', bufsize,  # Buffer size
             '-pix_fmt', 'yuv420p',
-            '-color_range', 'tv',  # Fix color range warning
-            '-colorspace', 'bt709',
-            '-g', str(framerate * 2),  # Keyframe every 2 seconds
+            '-g', str(gop_size),  # GOP size (keyframe interval)
             '-flags', '+low_delay',  # Low delay mode
             '-fflags', '+nobuffer',  # No buffering
         ])
@@ -239,8 +240,7 @@ def runCamera():
             cmd.extend([
                 '-c:a', 'aac',
                 '-b:a', '32k' if audio_channels == 1 else '64k',  # Lower bitrate for mono
-                # Audio filters to reduce noise
-                '-af', 'highpass=f=200,lowpass=f=3000,volume=2',  # Filter out rumble/hiss, boost volume
+                '-af', audio_filter,  # Audio filters
             ])
         
         # RTSP output
