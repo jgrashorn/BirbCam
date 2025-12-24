@@ -165,4 +165,10 @@ cython_debug/
 
 # other
 Videos/
+Webapp/recordings/*
 *.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg

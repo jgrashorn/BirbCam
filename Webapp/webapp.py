@@ -458,7 +458,8 @@ def api_add_camera():
         
         # Add new camera
         cameras_data[camera_name] = {
-            "settings_endpoint": settings_endpoint
+            "settings_endpoint": settings_endpoint,
+            "motion_detection_enabled": data.get('motion_detection_enabled', True)
         }
         
         # Save to cameras.json
@@ -595,6 +596,48 @@ def api_get_camera_server_config(cam_name):
         
         return jsonify(get_camera_server_config(cam_name))
             
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/system/cameras/<cam_name>/motion-detection', methods=['POST'])
+def api_toggle_motion_detection(cam_name):
+    """Toggle motion detection for a camera."""
+    global config
+    
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"status": "error", "message": "No data provided"}), 400
+        
+        enabled = data.get('enabled', True)
+        
+        # Load current cameras.json
+        cameras_json_path = Path(__file__).parent / "cameras.json"
+        with open(cameras_json_path, 'r') as f:
+            cameras_data = json.load(f)
+        
+        # Check if camera exists
+        if cam_name not in cameras_data:
+            return jsonify({"status": "error", "message": f"Camera '{cam_name}' not found"}), 404
+        
+        # Update motion detection setting
+        cameras_data[cam_name]['motion_detection_enabled'] = enabled
+        
+        # Save to cameras.json
+        with open(cameras_json_path, 'w') as f:
+            json.dump(cameras_data, f, indent=4)
+        
+        # Reload config module
+        from importlib import reload
+        import config as config_module
+        reload(config_module)
+        config = config_module.config
+        
+        return jsonify({
+            "status": "ok",
+            "message": f"Motion detection {'enabled' if enabled else 'disabled'} for '{cam_name}'"
+        })
+        
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

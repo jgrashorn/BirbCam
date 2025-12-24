@@ -30,6 +30,7 @@
               <th>Camera Name</th>
               <th>Settings IP</th>
               <th>Settings Port</th>
+              <th>Server-Side Motion Detection</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -39,6 +40,14 @@
               <td>{{ cam_name }}</td>
               <td>{{ cam_info.get('settings_endpoint', {}).get('ip', 'N/A') }}</td>
               <td>{{ cam_info.get('settings_endpoint', {}).get('port', 'N/A') }}</td>
+              <td>
+                <label class="toggle-switch">
+                  <input type="checkbox" 
+                         {% if cam_info.get('motion_detection_enabled', True) %}checked{% endif %}
+                         onchange="toggleMotionDetection('{{ cam_name }}', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </td>
               <td>
                 <button class="btn btn-danger btn-sm" onclick="deleteCamera('{{ cam_name }}')">🗑 Delete</button>
               </td>
@@ -72,6 +81,14 @@
                    placeholder="e.g., 5005" min="1" max="65535">
           </div>
           
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="motionDetection" name="motionDetection" checked>
+              Enable server-side motion detection
+            </label>
+            <small>Uncheck if camera handles motion detection automatically</small>
+          </div>
+          
           <button type="submit" class="btn btn-primary">➕ Add Camera</button>
         </form>
       </div>
@@ -87,6 +104,7 @@
       const cameraName = form.cameraName.value.trim();
       const cameraIp = form.cameraIp.value.trim();
       const cameraPort = parseInt(form.cameraPort.value);
+      const motionDetection = form.motionDetection.checked;
       
       try {
         const response = await fetch('/api/system/cameras', {
@@ -99,7 +117,8 @@
             settings_endpoint: {
               ip: cameraIp,
               port: cameraPort
-            }
+            },
+            motion_detection_enabled: motionDetection
           })
         });
         
@@ -136,6 +155,32 @@
         }
       } catch (error) {
         alert('Error deleting camera: ' + error.message);
+      }
+    }
+    
+    async function toggleMotionDetection(cameraName, enabled) {
+      try {
+        const response = await fetch(`/api/system/cameras/${cameraName}/motion-detection`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'ok') {
+          console.log(`Motion detection ${enabled ? 'enabled' : 'disabled'} for ${cameraName}`);
+        } else {
+          alert('Error toggling motion detection: ' + (result.message || 'Unknown error'));
+          // Reload to reset toggle state
+          window.location.reload();
+        }
+      } catch (error) {
+        alert('Error toggling motion detection: ' + error.message);
+        // Reload to reset toggle state
+        window.location.reload();
       }
     }
   </script>

@@ -658,6 +658,14 @@ def process_once():
         cleanup_old_temp_files()
     
     for cam in CAMERAS:
+        # Check if motion detection is enabled for this camera
+        cam_config = config.cameras.get(cam, {})
+        motion_enabled = cam_config.get('motion_detection_enabled', True)
+        
+        if not motion_enabled:
+            logger.info(f"[camera] {cam}: motion detection disabled, skipping")
+            continue
+        
         cam_start = time.time()
         logger.info(f"[camera] ========== Processing camera: {cam} ==========")
         
