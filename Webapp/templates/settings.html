@@ -154,6 +154,7 @@
     <form id="settings-form" class="settings-form">
         {% if settings %}
             {% for setting_name, setting_meta in settings.items() %}
+            {% if not setting_meta.get('hidden', False) %}
             <div class="form-group">
                 <label for="{{ setting_name }}">
                     {{ setting_meta.label }}:
@@ -195,6 +196,7 @@
                 <div class="help-text">{{ setting_meta.description }}</div>
                 {% endif %}
             </div>
+            {% endif %}
             {% endfor %}
         {% else %}
             <p>No settings available or unable to connect to camera.</p>

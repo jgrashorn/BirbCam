@@ -11,6 +11,24 @@ from pathlib import Path
 # Get the directory of this file
 WEBAPP_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Resolution presets for different camera types
+RESOLUTION_PRESETS = {
+    'picamera2': [
+        {'width': 1296, 'height': 972, 'label': '1296x972'},
+        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
+    ],
+    'ffmpeg': [
+        {'width': 640, 'height': 480, 'label': '640x480'},
+        {'width': 1280, 'height': 720, 'label': '1280x720'},
+        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
+    ],
+    'unknown': [
+        {'width': 640, 'height': 480, 'label': '640x480'},
+        {'width': 1280, 'height': 720, 'label': '1280x720'},
+        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
+    ]
+}
+
 def load_cameras_config():
     """Load cameras.json configuration."""
     with open(os.path.join(WEBAPP_DIR, 'cameras.json'), 'r') as f:
@@ -181,28 +199,9 @@ def apply_preset_constraints(setting_name, metadata, camera_type):
     Apply preset value constraints for specific settings based on camera type.
     Converts certain settings to select dropdowns with fixed options.
     """
-    # Resolution presets based on camera type
+    # Hide individual width/height settings - we'll use combined resolution instead
     if setting_name in ['width', 'height']:
-        if camera_type == 'picamera2':
-            # Picamera2 supports specific resolutions
-            if setting_name == 'width':
-                metadata['type'] = 'select'
-                metadata['options'] = [1296, 1920]
-                metadata['linked_setting'] = 'height'
-            elif setting_name == 'height':
-                metadata['type'] = 'select'
-                metadata['options'] = [972, 1080]
-                metadata['linked_setting'] = 'width'
-        elif camera_type == 'ffmpeg':
-            # USB camera best at 720p
-            if setting_name == 'width':
-                metadata['type'] = 'select'
-                metadata['options'] = [640, 1280, 1920]
-                metadata['linked_setting'] = 'height'
-            elif setting_name == 'height':
-                metadata['type'] = 'select'
-                metadata['options'] = [480, 720, 1080]
-                metadata['linked_setting'] = 'width'
+        metadata['hidden'] = True
     
     # Framerate presets for FFmpeg
     elif setting_name == 'framerate' and camera_type == 'ffmpeg':
@@ -226,6 +225,12 @@ def get_settings_metadata_for_camera(camera_name):
             'error': config,
             'settings': {}
         }
+    
+    # Ensure width and height are integers
+    if 'width' in config:
+        config['width'] = int(config['width'])
+    if 'height' in config:
+        config['height'] = int(config['height'])
     
     # Infer camera type from config
     camera_type = infer_camera_type_from_config(config)
@@ -266,6 +271,24 @@ def get_settings_metadata_for_camera(camera_name):
         
         settings_metadata[setting_name] = metadata
     
+    # Add combined resolution setting
+    if 'width' in config and 'height' in config:
+        current_width = config['width']
+        current_height = config['height']
+        current_resolution = f"{current_width}x{current_height}"
+        
+        presets = RESOLUTION_PRESETS.get(camera_type, RESOLUTION_PRESETS['unknown'])
+        
+        settings_metadata['resolution'] = {
+            'type': 'select',
+            'label': 'Resolution',
+            'description': 'Select camera resolution (width x height)',
+            'current_value': current_resolution,
+            'options': [preset['label'] for preset in presets],
+            'is_combined_setting': True,
+            'combined_keys': ['width', 'height']
+        }
+    
     return {
         'camera_type': camera_type,
         'settings': settings_metadata
@@ -286,6 +309,34 @@ def get_all_cameras_info():
         }
     
     return result
+
+def process_combined_settings(config_dict, camera_type):
+    """
+    Process combined settings like resolution and split them into individual settings.
+    Returns updated config dict.
+    """
+    updated_config = config_dict.copy()
+    
+    # Handle resolution setting
+    if 'resolution' in updated_config:
+        resolution_str = updated_config['resolution']
+        # Parse resolution string like "1920x1080"
+        try:
+            width_str, height_str = resolution_str.split('x')
+            updated_config['width'] = int(width_str)
+            updated_config['height'] = int(height_str)
+            del updated_config['resolution']
+        except (ValueError, AttributeError):
+            # If parsing fails, leave resolution as is
+            pass
+    
+    # Ensure width and height are always integers if present
+    if 'width' in updated_config:
+        updated_config['width'] = int(updated_config['width'])
+    if 'height' in updated_config:
+        updated_config['height'] = int(updated_config['height'])
+    
+    return updated_config
 
 def validate_setting(camera_name, setting_name, value):
     """

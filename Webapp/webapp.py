@@ -105,6 +105,13 @@ def api_set_settings(cam):
         if not new_config:
             return jsonify({"status": "error", "message": "No configuration provided"}), 400
         
+        # Get camera type for processing combined settings
+        settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+        camera_type = settings_data.get('camera_type', 'unknown')
+        
+        # Process combined settings (like resolution)
+        new_config = camera_settings.process_combined_settings(new_config, camera_type)
+        
         # Validate settings before sending to camera
         for setting_name, value in new_config.items():
             is_valid, error_msg = camera_settings.validate_setting(cam, setting_name, value)
