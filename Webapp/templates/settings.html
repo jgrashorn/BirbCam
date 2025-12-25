@@ -138,6 +138,9 @@
     <h1>
         <span id="connection-status" class="status-indicator status-offline"></span>
         Camera Settings - {{ cam }}
+        {% if camera_type %}
+        <span style="font-size: 0.6em; color: var(--text-secondary);">({{ camera_type }})</span>
+        {% endif %}
     </h1>
     
     {% if error %}
@@ -149,93 +152,55 @@
     <div id="message-container"></div>
     
     <form id="settings-form" class="settings-form">
-        <div class="form-section">
-            <h3>Network Settings</h3>
-            
+        {% if settings %}
+            {% for setting_name, setting_meta in settings.items() %}
+            {% if not setting_meta.get('hidden', False) %}
             <div class="form-group">
-                <label for="serverIP">Server IP:</label>
-                <input type="text" id="serverIP" name="serverIP" value="{{ config.get('serverIP', '') }}" required>
-                <div class="help-text">IP address of the server receiving the stream</div>
+                <label for="{{ setting_name }}">
+                    {{ setting_meta.label }}:
+                </label>
+                
+                {% if setting_meta.type == 'boolean' %}
+                    <input type="checkbox" 
+                           id="{{ setting_name }}" 
+                           name="{{ setting_name }}"
+                           {% if setting_meta.current_value %}checked{% endif %}>
+                
+                {% elif setting_meta.type == 'select' %}
+                    <select id="{{ setting_name }}" name="{{ setting_name }}">
+                        {% for option in setting_meta.options %}
+                        <option value="{{ option }}" 
+                                {% if option == setting_meta.current_value %}selected{% endif %}>
+                            {{ option }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                
+                {% elif setting_meta.type == 'number' %}
+                    <input type="number" 
+                           id="{{ setting_name }}" 
+                           name="{{ setting_name }}"
+                           value="{{ setting_meta.current_value }}"
+                           {% if setting_meta.min is defined %}min="{{ setting_meta.min }}"{% endif %}
+                           {% if setting_meta.max is defined %}max="{{ setting_meta.max }}"{% endif %}
+                           {% if setting_meta.step is defined %}step="{{ setting_meta.step }}"{% endif %}>
+                
+                {% else %}
+                    <input type="text" 
+                           id="{{ setting_name }}" 
+                           name="{{ setting_name }}"
+                           value="{{ setting_meta.current_value }}">
+                {% endif %}
+                
+                {% if setting_meta.description %}
+                <div class="help-text">{{ setting_meta.description }}</div>
+                {% endif %}
             </div>
-            
-            <div class="form-group">
-                <label for="rtspPort">RTSP Port:</label>
-                <input type="number" id="rtspPort" name="rtspPort" value="{{ config.get('rtspPort', 8554) }}" min="1" max="65535" required>
-                <div class="help-text">Port for RTSP stream output</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="name">Camera Name:</label>
-                <input type="text" id="name" name="name" value="{{ config.get('name', '') }}" required>
-                <div class="help-text">Identifier for this camera</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="settingsPort">Settings Port:</label>
-                <input type="number" id="settingsPort" name="settingsPort" value="{{ config.get('settingsPort', 5005) }}" min="1" max="65535">
-                <div class="help-text">Port for settings server (requires restart)</div>
-            </div>
-        </div>
-        
-        <div class="form-section">
-            <h3>Video Settings</h3>
-            
-            <div class="form-group">
-                <label for="width">Video Width:</label>
-                <input type="number" id="width" name="width" value="{{ config.get('width', 1296) }}" min="320" max="4096" required>
-                <div class="help-text">Recording resolution width in pixels</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="height">Video Height:</label>
-                <input type="number" id="height" name="height" value="{{ config.get('height', 972) }}" min="240" max="3072" required>
-                <div class="help-text">Recording resolution height in pixels</div>
-            </div>
-        </div>
-        
-        <div class="form-section">
-            <h3>Color & Light Settings</h3>
-            
-            <div class="form-group">
-                <label for="bwSwitchingSensitivity">B/W Switching Sensitivity:</label>
-                <input type="number" id="bwSwitchingSensitivity" name="bwSwitchingSensitivity" value="{{ config.get('bwSwitchingSensitivity', 1500) }}" min="0" max="10000" step="100">
-                <div class="help-text">Brightness threshold for switching to grayscale (lower = switches earlier)</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="clrSwitchingSensitivity">Color Switching Sensitivity:</label>
-                <input type="number" id="clrSwitchingSensitivity" name="clrSwitchingSensitivity" value="{{ config.get('clrSwitchingSensitivity', 1800) }}" min="0" max="10000" step="100">
-                <div class="help-text">Brightness threshold for switching to color (higher = switches later)</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="colorOffset_red">Color Offset Red:</label>
-                <input type="number" id="colorOffset_red" name="colorOffset_red" value="{{ config.get('colorOffset_red', 0.8) }}" min="0.1" max="3.0" step="0.1">
-                <div class="help-text">Red color correction for IR cameras</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="colorOffset_blue">Color Offset Blue:</label>
-                <input type="number" id="colorOffset_blue" name="colorOffset_blue" value="{{ config.get('colorOffset_blue', 1.5) }}" min="0.1" max="3.0" step="0.1">
-                <div class="help-text">Blue color correction for IR cameras</div>
-            </div>
-            
-            <div class="form-group">
-                <label for="skippedFramesAfterChange">Skipped Frames After Change:</label>
-                <input type="number" id="skippedFramesAfterChange" name="skippedFramesAfterChange" value="{{ config.get('skippedFramesAfterChange', 50) }}" min="1" max="200">
-                <div class="help-text">Number of frames to skip after mode changes</div>
-            </div>
-        </div>
-        
-        <div class="form-section">
-            <h3>Audio Settings</h3>
-            
-            <div class="form-group">
-                <label for="audioDelay">Audio Delay (seconds):</label>
-                <input type="number" id="audioDelay" name="audioDelay" value="{{ config.get('audioDelay', -0.3) }}" min="-2.0" max="2.0" step="0.1">
-                <div class="help-text">Audio synchronization delay</div>
-            </div>
-        </div>
+            {% endif %}
+            {% endfor %}
+        {% else %}
+            <p>No settings available or unable to connect to camera.</p>
+        {% endif %}
         
         <div class="button-group">
             <button type="submit" class="btn-primary">Save Settings</button>
@@ -276,13 +241,20 @@ function collectFormData() {
     const config = {};
     
     for (let [key, value] of formData.entries()) {
-        // Convert numeric values
-        if (['width', 'height', 'rtspPort', 'settingsPort', 'bwSwitchingSensitivity', 
-             'clrSwitchingSensitivity', 'skippedFramesAfterChange'].includes(key)) {
-            config[key] = parseInt(value);
-        } else if (['colorOffset_red', 'colorOffset_blue', 'audioDelay'].includes(key)) {
-            config[key] = parseFloat(value);
-        } else {
+        const input = document.getElementById(key);
+        
+        // Handle checkboxes
+        if (input && input.type === 'checkbox') {
+            config[key] = input.checked;
+        }
+        // Handle numbers
+        else if (input && input.type === 'number') {
+            const num = parseFloat(value);
+            // Use integer if step is 1 or not defined, otherwise use float
+            config[key] = (input.step && parseFloat(input.step) < 1) ? num : parseInt(value);
+        }
+        // Everything else as string
+        else {
             config[key] = value;
         }
     }
@@ -294,15 +266,23 @@ function loadSettings() {
     fetch(`/api/settings/${cam}`)
         .then(response => response.json())
         .then(data => {
-            if (data.status === 'ok' && data.config) {
-                const config = data.config;
-                // Populate form fields
-                Object.keys(config).forEach(key => {
+            if (data.status === 'ok' && data.data) {
+                const settings = data.data.settings;
+                
+                // Populate form fields dynamically
+                Object.keys(settings).forEach(key => {
                     const input = document.getElementById(key);
+                    const meta = settings[key];
+                    
                     if (input) {
-                        input.value = config[key];
+                        if (input.type === 'checkbox') {
+                            input.checked = meta.current_value;
+                        } else {
+                            input.value = meta.current_value;
+                        }
                     }
                 });
+                
                 updateConnectionStatus(true);
                 showMessage('Settings loaded successfully', 'success');
             } else {

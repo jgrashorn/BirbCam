@@ -1,6 +1,7 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify, url_for, abort
 import os, time, subprocess, socket, json, shutil, hashlib
 from pathlib import Path
+import camera_settings
 
 # Load environment variables from .env file if it exists
 def load_env_file():
@@ -28,26 +29,27 @@ except ImportError:
 app = Flask(__name__)
 
 # Validate configuration at startup
-try:
-    config.validate_directories(create=True)
-    print(f"✓ Configuration validated for camera: {config.camera}")
-    print(f"✓ Media directory: {config.media_dir}")
-    print(f"✓ Output directory: {config.output_dir}")
-except Exception as e:
-    print(f"✗ Configuration error: {e}")
-    exit(1)
+# try:
+#     config.validate_directories(create=True)
+#     print(f"✓ Configuration validated for camera: {config.cameras}")
+#     print(f"✓ Media directory: {config.media_dir}")
+#     print(f"✓ Output directory: {config.output_dir}")
+# except Exception as e:
+#     print(f"✗ Configuration error: {e}")
+#     exit(1)
 
 # Define your available cameras and their HLS paths
-cameras = {
-    "schwalben": "http://192.168.178.36:8888/schwalben/index.m3u8"
-    # Add more cameras here
-}
 
-# Camera settings endpoints configuration
-camera_endpoints = {
-    "schwalben": {"ip": "192.168.178.25", "port": 5005}
-    # Add more camera endpoints here
-}
+stream_name_function = lambda name: f"http://{config.hlsip}:{config.hlspath}/{name}/index.m3u8"
+
+cameras = {}
+camera_endpoints = {}
+
+for cam_name, cam_info in config.cameras.items():
+    cameras[cam_name] = stream_name_function(cam_name)
+    camera_endpoints[cam_name] = cam_info.get("settings_endpoint", {})
+
+# cameras = config.cameras
 
 @app.route('/')
 def index():
@@ -55,7 +57,7 @@ def index():
 
 @app.route('/camera/<cam>')
 def camera(cam):
-    stream_url = cameras.get(cam)
+    stream_url = stream_name_function(cam)
     if not stream_url:
         return "Camera not found", 404
     return render_template('camera.html', cam=cam, stream_url=stream_url)
@@ -65,25 +67,33 @@ def settings(cam):
     if cam not in cameras:
         return "Camera not found", 404
     
-    # Get current configuration from camera
-    config_response = get_camera_config(cam)
-    if config_response.get("status") == "ok":
-        current_config = config_response.get("config", {})
-    else:
-        current_config = {}
-        error_message = config_response.get("message", "Failed to get configuration")
+    # Get settings metadata (includes current values and UI hints)
+    settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+    
+    if 'error' in settings_data:
+        return render_template('settings.html', 
+                             cam=cam, 
+                             settings={},
+                             error=settings_data['error'])
     
     return render_template('settings.html', 
                          cam=cam, 
-                         config=current_config,
-                         error=config_response.get("message") if config_response.get("status") != "ok" else None)
+                         camera_type=settings_data.get('camera_type', 'unknown'),
+                         settings=settings_data.get('settings', {}),
+                         error=None)
 
 @app.route('/api/settings/<cam>', methods=['GET'])
 def api_get_settings(cam):
     if cam not in cameras:
         return jsonify({"status": "error", "message": "Camera not found"}), 404
     
-    return jsonify(get_camera_config(cam))
+    # Return settings metadata with current values
+    settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+    
+    if 'error' in settings_data:
+        return jsonify({"status": "error", "message": settings_data['error']}), 500
+    
+    return jsonify({"status": "ok", "data": settings_data})
 
 @app.route('/api/settings/<cam>', methods=['POST'])
 def api_set_settings(cam):
@@ -95,12 +105,29 @@ def api_set_settings(cam):
         if not new_config:
             return jsonify({"status": "error", "message": "No configuration provided"}), 400
         
-        result = set_camera_config(cam, new_config)
+        # Get camera type for processing combined settings
+        settings_data = camera_settings.get_settings_metadata_for_camera(cam)
+        camera_type = settings_data.get('camera_type', 'unknown')
         
-        if result.get("status") == "ok":
-            return jsonify(result)
+        # Process combined settings (like resolution)
+        new_config = camera_settings.process_combined_settings(new_config, camera_type)
+        
+        # Validate settings before sending to camera
+        for setting_name, value in new_config.items():
+            is_valid, error_msg = camera_settings.validate_setting(cam, setting_name, value)
+            if not is_valid:
+                return jsonify({
+                    "status": "error", 
+                    "message": f"Invalid value for {setting_name}: {error_msg}"
+                }), 400
+        
+        # Send to camera
+        result = camera_settings.send_camera_config(cam, new_config)
+        
+        if result[0]:  # success
+            return jsonify({"status": "ok", "message": result[1]})
         else:
-            return jsonify(result), 400
+            return jsonify({"status": "error", "message": result[1]}), 400
             
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -176,7 +203,7 @@ def _concat(parts: list[Path], dst: Path) -> bool:
 
 def communicate_with_camera(cam_name: str, command: str, timeout=10):
     """Send command to camera settings server and get response."""
-    if cam_name not in camera_endpoints:
+    if cam_name not in cameras:
         return {"status": "error", "message": f"Unknown camera: {cam_name}"}
     
     endpoint = camera_endpoints[cam_name]
@@ -395,6 +422,231 @@ def serve_recording(cam, relpath):
     if not requested.exists():
         return "File not found", 404
     return send_from_directory(str(cam_dir), relpath)
+
+# Add this route for system settings page
+@app.route('/system/settings')
+def system_settings():
+    """System settings page for managing cameras."""
+    error = request.args.get('error')
+    success = request.args.get('success')
+    return render_template('system_settings.html', 
+                         cameras=config.cameras,
+                         error=error,
+                         success=success)
+
+# API endpoint to add a new camera
+@app.route('/api/system/cameras', methods=['POST'])
+def api_add_camera():
+    """Add a new camera to cameras.json."""
+    global cameras, camera_endpoints, config
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "No data provided"}), 400
+        
+        camera_name = data.get('name')
+        settings_endpoint = data.get('settings_endpoint')
+        
+        if not camera_name or not settings_endpoint:
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+        
+        if not isinstance(settings_endpoint, dict) or 'ip' not in settings_endpoint or 'port' not in settings_endpoint:
+            return jsonify({"status": "error", "message": "Invalid settings_endpoint format"}), 400
+        
+        # Load current cameras.json
+        cameras_json_path = Path(__file__).parent / "cameras.json"
+        with open(cameras_json_path, 'r') as f:
+            cameras_data = json.load(f)
+        
+        # Check if camera already exists
+        if camera_name in cameras_data:
+            return jsonify({"status": "error", "message": f"Camera '{camera_name}' already exists"}), 400
+        
+        # Add new camera
+        cameras_data[camera_name] = {
+            "settings_endpoint": settings_endpoint,
+            "motion_detection_enabled": data.get('motion_detection_enabled', True)
+        }
+        
+        # Save to cameras.json
+        with open(cameras_json_path, 'w') as f:
+            json.dump(cameras_data, f, indent=4)
+        
+        # Reload configuration
+        global cameras, camera_endpoints
+        cameras[camera_name] = stream_name_function(camera_name)
+        camera_endpoints[camera_name] = settings_endpoint
+        
+        # Prepare server settings to send to camera
+        server_settings = {
+            "serverIP": config.hlsip if hasattr(config, 'hlsip') else "localhost",
+            "name": camera_name,
+            "rtspPort": 8554,  # Default RTSP port
+            "settingsPort": settings_endpoint['port']
+        }
+        
+        # Send server settings to camera
+        result = set_camera_server_config(camera_name, server_settings)
+        
+        # if result.get("status") != "ok":
+            # logger.warning(f"Failed to send server settings to camera: {result.get('message')}")
+            # Continue anyway - camera might pick it up later
+        
+        # Reload config module
+        from importlib import reload
+        import config as config_module
+        reload(config_module)
+        
+        # Update the global config reference
+        config = config_module.config
+        
+        return jsonify({
+            "status": "ok", 
+            "message": f"Camera '{camera_name}' added successfully",
+            "server_config_sent": result.get("status") == "ok"
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# API endpoint to delete a camera
+@app.route('/api/system/cameras/<cam_name>', methods=['DELETE'])
+def api_delete_camera(cam_name):
+    """Delete a camera from cameras.json."""
+    global cameras, camera_endpoints, config
+    
+    try:
+        # Load current cameras.json
+        cameras_json_path = Path(__file__).parent / "cameras.json"
+        with open(cameras_json_path, 'r') as f:
+            cameras_data = json.load(f)
+        
+        # Check if camera exists
+        if cam_name not in cameras_data:
+            return jsonify({"status": "error", "message": f"Camera '{cam_name}' not found"}), 404
+        
+        # Delete camera
+        del cameras_data[cam_name]
+        
+        # Save to cameras.json
+        with open(cameras_json_path, 'w') as f:
+            json.dump(cameras_data, f, indent=4)
+        
+        # Update runtime configuration
+        global cameras, camera_endpoints
+        if cam_name in cameras:
+            del cameras[cam_name]
+        if cam_name in camera_endpoints:
+            del camera_endpoints[cam_name]
+        
+        # Reload config module
+        from importlib import reload
+        import config as config_module
+        reload(config_module)
+        
+        # Update the global config reference
+        config = config_module.config
+        
+        return jsonify({"status": "ok", "message": f"Camera '{cam_name}' deleted successfully"})
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    
+def set_camera_server_config(cam_name: str, server_config: dict):
+    """Send server configuration to camera."""
+    config_json = json.dumps(server_config)
+    return communicate_with_camera(cam_name, f"SET_SERVER_CONFIG:{config_json}")
+
+def get_camera_server_config(cam_name: str):
+    """Get current server configuration from camera."""
+    return communicate_with_camera(cam_name, "GET_SERVER_CONFIG")
+
+@app.route('/api/system/cameras/<cam_name>/server-config', methods=['POST'])
+def api_update_camera_server_config(cam_name):
+    """Update server configuration for a camera."""
+    try:
+        if cam_name not in cameras:
+            return jsonify({"status": "error", "message": f"Camera '{cam_name}' not found"}), 404
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "No data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ["serverIP", "name", "rtspPort", "settingsPort"]
+        missing_fields = [field for field in required_fields if field not in data]
+        
+        if missing_fields:
+            return jsonify({
+                "status": "error", 
+                "message": f"Missing required fields: {', '.join(missing_fields)}"
+            }), 400
+        
+        # Send server configuration to camera
+        result = set_camera_server_config(cam_name, data)
+        
+        if result.get("status") == "ok":
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/system/cameras/<cam_name>/server-config', methods=['GET'])
+def api_get_camera_server_config(cam_name):
+    """Get server configuration from a camera."""
+    try:
+        if cam_name not in cameras:
+            return jsonify({"status": "error", "message": f"Camera '{cam_name}' not found"}), 404
+        
+        return jsonify(get_camera_server_config(cam_name))
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/system/cameras/<cam_name>/motion-detection', methods=['POST'])
+def api_toggle_motion_detection(cam_name):
+    """Toggle motion detection for a camera."""
+    global config
+    
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"status": "error", "message": "No data provided"}), 400
+        
+        enabled = data.get('enabled', True)
+        
+        # Load current cameras.json
+        cameras_json_path = Path(__file__).parent / "cameras.json"
+        with open(cameras_json_path, 'r') as f:
+            cameras_data = json.load(f)
+        
+        # Check if camera exists
+        if cam_name not in cameras_data:
+            return jsonify({"status": "error", "message": f"Camera '{cam_name}' not found"}), 404
+        
+        # Update motion detection setting
+        cameras_data[cam_name]['motion_detection_enabled'] = enabled
+        
+        # Save to cameras.json
+        with open(cameras_json_path, 'w') as f:
+            json.dump(cameras_data, f, indent=4)
+        
+        # Reload config module
+        from importlib import reload
+        import config as config_module
+        reload(config_module)
+        config = config_module.config
+        
+        return jsonify({
+            "status": "ok",
+            "message": f"Motion detection {'enabled' if enabled else 'disabled'} for '{cam_name}'"
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

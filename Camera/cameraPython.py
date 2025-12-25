@@ -33,10 +33,14 @@ def runCamera():
                         level=logging.INFO,
                         datefmt='%Y-%m-%d %H:%M:%S')
     
+    # Load server configuration first
+    server_config = birdCamera.readServerConfig()
+    
+    # Load camera configuration
     config = birdCamera.readConfig()
     
     # Start settings server
-    settings_port = config.get("settingsPort", 5005)
+    settings_port = server_config.get("settingsPort", 5005)
     birdCamera.startSettingsServer(settings_port)
     
     lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
@@ -57,8 +61,9 @@ def runCamera():
     encoder = None
     streamOutput = None
     streaming = {"running": False}
+    reconfigure_camera = threading.Event()  # Signal for camera reconfiguration
 
-    rtsp_url = f'rtsp://{config["serverIP"]}:{config["rtspPort"]}/{config["name"]}'
+    rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
 
     # Replace pgrep with a /proc scan (more reliable, no shell)
     def _find_ffmpeg_pid(target_url: str):
@@ -88,9 +93,9 @@ def runCamera():
         return _find_ffmpeg_pid(rtsp_url) is None
 
     def start_stream():
-        nonlocal encoder, streamOutput
+        nonlocal encoder, streamOutput, rtsp_url
         try:
-            logger.info("Starting RTSP encoder/output")
+            logger.info(f"Starting RTSP encoder/output to {rtsp_url}")
             enc = H264Encoder(2000000)
             try:
                 enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
@@ -148,17 +153,93 @@ def runCamera():
             encoder = None
             streamOutput = None
             streaming["running"] = False
+            logger.info("RTSP encoder/output stopped")
 
     def stream_manager():
-        host = config["serverIP"]
-        port = config["rtspPort"]
+        nonlocal rtsp_url, server_config, config, msize
+        host = server_config["serverIP"]
+        port = server_config["rtspPort"]
         dead_ticks = 0
         down_ticks = 0
         up_ticks = 0
-        DEAD_THRESH = 3   # require 3 consecutive misses (~6s) before restart
+        DEAD_THRESH = 3   # require 3 consecutive misses (~30s) before restart
         DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
         UP_THRESH = 2     # require 2 consecutive successes before start
+        
         while True:
+            # Check for server configuration changes
+            if birdCamera.waitForServerConfigChange(timeout=0.1):
+                logger.info("Server configuration changed, reloading...")
+                new_server_config = birdCamera.getCurrentServerConfig()
+                
+                # If server IP, port, or name changed, restart stream
+                if (server_config["serverIP"] != new_server_config["serverIP"] or
+                    server_config["rtspPort"] != new_server_config["rtspPort"] or
+                    server_config["name"] != new_server_config["name"]):
+                    
+                    logger.info("Server connection details changed, restarting stream...")
+                    with encoder_lock:
+                        if streaming["running"]:
+                            stop_stream()
+                    
+                    # Update server config and rtsp_url
+                    server_config = new_server_config
+                    rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
+                    host = server_config["serverIP"]
+                    port = server_config["rtspPort"]
+                    
+                    logger.info(f"New RTSP URL: {rtsp_url}")
+                    
+                    # Reset counters
+                    dead_ticks = 0
+                    down_ticks = 0
+                    up_ticks = 0
+                else:
+                    server_config = new_server_config
+            
+            # Check if camera reconfiguration is needed
+            if reconfigure_camera.is_set():
+                logger.info("Camera reconfiguration requested, stopping stream...")
+                with encoder_lock:
+                    if streaming["running"]:
+                        stop_stream()
+                
+                # Stop camera
+                try:
+                    logger.info("Stopping camera...")
+                    picam2.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping camera: {e}")
+                
+                # Get latest config
+                new_config = birdCamera.getCurrentConfig()
+                msize = (new_config["width"], new_config["height"])
+                
+                # Reconfigure camera
+                logger.info(f"Reconfiguring camera to {msize[0]}x{msize[1]}...")
+                video_config = picam2.create_video_configuration(
+                    main={"size": msize, "format": "YUV420"},
+                    lores={"size": lsize, "format": "YUV420"},
+                    controls={"ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])}
+                )
+                video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
+                picam2.configure(video_config)
+                
+                # Restart camera
+                picam2.start()
+                logger.info("Camera reconfigured and restarted")
+                
+                # Update config reference
+                config.update(new_config)
+                
+                # Clear the flag
+                reconfigure_camera.clear()
+                
+                # Reset counters to trigger stream restart
+                dead_ticks = 0
+                down_ticks = 0
+                up_ticks = 0
+            
             up = _rtsp_up(host, port)
             with encoder_lock:
                 if streaming["running"]:
@@ -187,6 +268,7 @@ def runCamera():
                             up_ticks = 0
                     else:
                         up_ticks = 0
+            
             time.sleep(10)
 
     # Start camera and manager; encoder will start when RTSP is reachable
@@ -209,9 +291,22 @@ def runCamera():
             logger.info("Configuration changed, reloading...")
             new_config = birdCamera.getCurrentConfig()
             
-            # Update color gains if they changed
-            if (config["colorOffset_red"] != new_config["colorOffset_red"] or
-                config["colorOffset_blue"] != new_config["colorOffset_blue"]):
+            # Check if resolution changed (requires camera reconfiguration)
+            if (config["width"] != new_config["width"] or
+                config["height"] != new_config["height"]):
+                logger.info(f"Resolution changed from {config['width']}x{config['height']} to {new_config['width']}x{new_config['height']}")
+                # Signal stream manager to handle the reconfiguration
+                reconfigure_camera.set()
+                # Wait a bit for the camera to be restarted
+                time.sleep(2)
+                # Reset preview buffer after reconfiguration
+                prev = picam2.capture_buffer("lores")
+                prev = prev[:w * h].reshape(h, w).astype(np.int16)
+                skipNFrames = new_config["skippedFramesAfterChange"]
+                
+            # Update color gains if they changed (and resolution didn't)
+            elif (config["colorOffset_red"] != new_config["colorOffset_red"] or
+                  config["colorOffset_blue"] != new_config["colorOffset_blue"]):
                 try:
                     picam2.set_controls({
                         "ColourGains": (
@@ -220,13 +315,16 @@ def runCamera():
                         )
                     })
                     logger.info("Updated color gains")
+                    config.update(new_config)
                 except Exception as e:
                     logger.error(f"Failed to update color gains: {e}")
+                
+                skipNFrames = new_config["skippedFramesAfterChange"]
+            else:
+                # Other config changes that don't need camera restart
+                config.update(new_config)
             
-            # Update configuration reference
-            config.update(new_config)
-            skipNFrames = config["skippedFramesAfterChange"]  # Reset frames after config change
-            logger.info(config)
+            logger.info(f"Configuration updated: {config}")
             
         # capture new preview and reshape
         cur = picam2.capture_buffer("lores")

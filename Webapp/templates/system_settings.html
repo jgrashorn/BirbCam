@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>System Settings</title>
+</head>
+<body>
+  {% extends "base.html" %}
+
+  {% block title %}BirbCam — System Settings{% endblock %}
+
+  {% block content %}
+    <h2>System Settings</h2>
+    
+    <div class="settings-section">
+      <h3>Manage Cameras</h3>
+      
+      {% if error %}
+      <div class="alert alert-error">{{ error }}</div>
+      {% endif %}
+      
+      {% if success %}
+      <div class="alert alert-success">{{ success }}</div>
+      {% endif %}
+      
+      <div class="camera-list">
+        <h4>Current Cameras</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Camera Name</th>
+              <th>Settings IP</th>
+              <th>Settings Port</th>
+              <th>Server-Side Motion Detection</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="camerasTableBody">
+            {% for cam_name, cam_info in cameras.items() %}
+            <tr data-camera="{{ cam_name }}">
+              <td>{{ cam_name }}</td>
+              <td>{{ cam_info.get('settings_endpoint', {}).get('ip', 'N/A') }}</td>
+              <td>{{ cam_info.get('settings_endpoint', {}).get('port', 'N/A') }}</td>
+              <td>
+                <label class="toggle-switch">
+                  <input type="checkbox" 
+                         {% if cam_info.get('motion_detection_enabled', True) %}checked{% endif %}
+                         onchange="toggleMotionDetection('{{ cam_name }}', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </td>
+              <td>
+                <button class="btn btn-danger btn-sm" onclick="deleteCamera('{{ cam_name }}')">🗑 Delete</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="add-camera-form">
+        <h4>Add New Camera</h4>
+        <form id="addCameraForm" onsubmit="addCamera(event)">
+          <div class="form-group">
+            <label for="cameraName">Camera Name:</label>
+            <input type="text" id="cameraName" name="cameraName" required 
+                   placeholder="e.g., FrontYard" pattern="[A-Za-z0-9_-]+"
+                   title="Only letters, numbers, underscores and hyphens allowed">
+          </div>
+          
+          <div class="form-group">
+            <label for="cameraIp">Settings Endpoint IP:</label>
+            <input type="text" id="cameraIp" name="cameraIp" required 
+                   placeholder="e.g., 192.168.1.100"
+                   pattern="^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+                   title="Valid IP address required">
+          </div>
+          
+          <div class="form-group">
+            <label for="cameraPort">Settings Endpoint Port:</label>
+            <input type="number" id="cameraPort" name="cameraPort" required 
+                   placeholder="e.g., 5005" min="1" max="65535">
+          </div>
+          
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="motionDetection" name="motionDetection" checked>
+              Enable server-side motion detection
+            </label>
+            <small>Uncheck if camera handles motion detection automatically</small>
+          </div>
+          
+          <button type="submit" class="btn btn-primary">➕ Add Camera</button>
+        </form>
+      </div>
+    </div>
+  {% endblock %}
+
+  {% block scripts %}
+  <script>
+    async function addCamera(event) {
+      event.preventDefault();
+      
+      const form = event.target;
+      const cameraName = form.cameraName.value.trim();
+      const cameraIp = form.cameraIp.value.trim();
+      const cameraPort = parseInt(form.cameraPort.value);
+      const motionDetection = form.motionDetection.checked;
+      
+      try {
+        const response = await fetch('/api/system/cameras', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: cameraName,
+            settings_endpoint: {
+              ip: cameraIp,
+              port: cameraPort
+            },
+            motion_detection_enabled: motionDetection
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'ok') {
+          // Reload page to show updated camera list
+          window.location.reload();
+        } else {
+          alert('Error adding camera: ' + (result.message || 'Unknown error'));
+        }
+      } catch (error) {
+        alert('Error adding camera: ' + error.message);
+      }
+    }
+    
+    async function deleteCamera(cameraName) {
+      if (!confirm(`Are you sure you want to delete camera "${cameraName}"?`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetch(`/api/system/cameras/${cameraName}`, {
+          method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'ok') {
+          // Reload page to show updated camera list
+          window.location.reload();
+        } else {
+          alert('Error deleting camera: ' + (result.message || 'Unknown error'));
+        }
+      } catch (error) {
+        alert('Error deleting camera: ' + error.message);
+      }
+    }
+    
+    async function toggleMotionDetection(cameraName, enabled) {
+      try {
+        const response = await fetch(`/api/system/cameras/${cameraName}/motion-detection`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'ok') {
+          console.log(`Motion detection ${enabled ? 'enabled' : 'disabled'} for ${cameraName}`);
+        } else {
+          alert('Error toggling motion detection: ' + (result.message || 'Unknown error'));
+          // Reload to reset toggle state
+          window.location.reload();
+        }
+      } catch (error) {
+        alert('Error toggling motion detection: ' + error.message);
+        // Reload to reset toggle state
+        window.location.reload();
+      }
+    }
+  </script>
+  {% endblock %}
+</body>
+</html>

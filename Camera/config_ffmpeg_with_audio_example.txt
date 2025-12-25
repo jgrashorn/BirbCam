@@ -1,0 +1,13 @@
+{
+    "width": 1280,
+    "height": 720,
+    "framerate": 25,
+    "bitrate": "1500k",
+    "preset": "ultrafast",
+    "inputFormat": "mjpeg",
+    "videoDevice": "/dev/video0",
+    "enableAudio": true,
+    "audioDevice": "hw:0,0",
+    "audioChannels": 1,
+    "audioSampleRate": 8000
+}

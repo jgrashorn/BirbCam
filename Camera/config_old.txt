@@ -1,10 +1,4 @@
-{
-    "serverIP": "192.168.178.38",
-	"port": 5005,
-	"name": "garten",
-	"rtspPort": 8554,
-	"settingsPort": 5005,
-	
+{	
     "width": 1296,
     "height": 972,
 
