@@ -211,6 +211,13 @@ def apply_preset_constraints(setting_name, metadata, camera_type):
             metadata['type'] = 'select'
             metadata['options'] = [15, 25, 30]
     
+    # Encoder type dropdown for picamera2
+    elif setting_name == 'encoderType' and camera_type == 'picamera2':
+        metadata['type'] = 'select'
+        metadata['options'] = ['h264', 'mjpeg']
+        metadata['label'] = 'Encoder Type'
+        metadata['description'] = 'H264 for lower bandwidth, MJPEG for higher resolutions'
+    
     return metadata
 
 def get_settings_metadata_for_camera(camera_name):
