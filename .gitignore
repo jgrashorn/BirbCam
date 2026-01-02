@@ -172,3 +172,6 @@ Webapp/recordings/*
 *.jpeg
 *.gif
 *.svg
+
+Camera/config.txt
+Camera/server_settings.txt
