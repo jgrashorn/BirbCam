@@ -49,7 +49,6 @@ def runCamera():
 
     props = picam2.camera_properties
     logger.info(f"camera properties: {props}")
-    logger.info(f"available formats: {props['PixelFormats']}")
 
     def choose_main_format(picam2):
         model = picam2["Model"]
