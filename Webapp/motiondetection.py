@@ -647,6 +647,125 @@ def sanitize_name(p: Path) -> str:
     tokens = parts[-3:-1] + [p.stem]
     return "_".join(tokens)
 
+def parse_timestamp_from_filename(filename: str) -> tuple[float, float] | None:
+    """
+    Parse start and end timestamps from a motion clip filename.
+    Expected format: *_YYYYMMDD_HHMMSS_YYYYMMDD_HHMMSS.mp4 or similar patterns.
+    Returns (start_epoch, end_epoch) or None if parsing fails.
+    """
+    try:
+        # Try to extract date/time pattern from filename
+        # This is a simplified version - adjust based on your actual naming convention
+        stem = Path(filename).stem
+        parts = stem.split('_')
+        
+        # Look for timestamp pattern in parts
+        # Format could be like: camera_date_time_windowindex_unixstamp.mp4
+        # We'll use the file's modification time as approximation for now
+        return None
+    except Exception:
+        return None
+
+def get_video_file_timespan(video_path: Path) -> tuple[float, float] | None:
+    """
+    Get the timespan (start, end) of a video file based on its modification time and duration.
+    Returns (start_epoch, end_epoch) or None if it fails.
+    """
+    try:
+        if not video_path.exists():
+            return None
+        
+        # Get file modification time as the end time
+        end_time = video_path.stat().st_mtime
+        
+        # Get video duration
+        duration = ffprobe_duration(video_path)
+        if duration <= 0:
+            return None
+        
+        # Start time is end time minus duration
+        start_time = end_time - duration
+        
+        return (start_time, end_time)
+    except Exception as e:
+        logger.debug(f"Failed to get timespan for {video_path}: {e}")
+        return None
+
+def check_temporal_overlap(new_start: float, new_end: float, existing_start: float, existing_end: float, tolerance: float = 5.0) -> bool:
+    """
+    Check if two time ranges overlap (with tolerance for small gaps).
+    tolerance: seconds of gap that still counts as "overlapping"
+    """
+    # Expand ranges by tolerance
+    new_start -= tolerance
+    new_end += tolerance
+    existing_start -= tolerance
+    existing_end += tolerance
+    
+    # Check for overlap
+    return not (new_end < existing_start or new_start > existing_end)
+
+def find_overlapping_outputs(cam: str, source_file: Path, window_start: float, window_end: float, produced: set) -> list[Path]:
+    """
+    Find existing output files that temporally overlap with the proposed new window.
+    Returns list of overlapping output file paths.
+    """
+    overlapping = []
+    
+    # Calculate absolute timestamps for the new window
+    try:
+        source_mtime = source_file.stat().st_mtime
+        source_duration = ffprobe_duration(source_file)
+        if source_duration <= 0:
+            return overlapping
+        
+        # Calculate when this window actually occurred
+        # Assume the video file's mtime is the end time of the recording
+        video_end_time = source_mtime
+        video_start_time = video_end_time - source_duration
+        
+        # Map window times to absolute timestamps
+        new_start_abs = video_start_time + window_start
+        new_end_abs = video_start_time + window_end
+        
+        # Check all produced outputs for this camera
+        output_dir = OUTPUT_DIR(cam)
+        if not output_dir.exists():
+            return overlapping
+        
+        for day_dir in output_dir.iterdir():
+            if not day_dir.is_dir():
+                continue
+            
+            for output_file in day_dir.glob("*.mp4"):
+                # Skip temporary files
+                if output_file.name.startswith("._tmp_"):
+                    continue
+                
+                # Check if this is in our produced set
+                if output_file.name not in produced:
+                    continue
+                
+                # Get the timespan of this existing output
+                existing_span = get_video_file_timespan(output_file)
+                if not existing_span:
+                    continue
+                
+                existing_start, existing_end = existing_span
+                
+                # Check for overlap (with 10 second tolerance)
+                if check_temporal_overlap(new_start_abs, new_end_abs, existing_start, existing_end, tolerance=10.0):
+                    logger.info(f"[overlap] Found overlapping output: {output_file.name}")
+                    logger.info(f"  New window: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(new_start_abs))} - {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(new_end_abs))}")
+                    logger.info(f"  Existing:   {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(existing_start))} - {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(existing_end))}")
+                    overlapping.append(output_file)
+        
+        return overlapping
+        
+    except Exception as e:
+        logger.debug(f"Error finding overlapping outputs: {e}")
+        return overlapping
+
 # ---------- MAIN PASS ----------
 
 def process_once():
@@ -727,78 +846,177 @@ def process_once():
 
         # Iterate and export
         keys = list(file_info.keys())
+        
+        # NEW: Build a global timeline of all motion windows across files
+        # This helps us detect when motion should be merged across multiple files
+        global_timeline = []
         for idx, p in enumerate(keys):
             info = file_info[p]
-            windows = info["windows"]
+            for wi, (s, e) in enumerate(info["windows"]):
+                global_timeline.append({
+                    'file_idx': idx,
+                    'file_path': p,
+                    'window_idx': wi,
+                    'local_start': s,
+                    'local_end': e,
+                    'consumed': False
+                })
+        
+        # Sort timeline by file order and window start time
+        global_timeline.sort(key=lambda x: (x['file_idx'], x['local_start']))
+        
+        # Process each window in the global timeline
+        for entry in global_timeline:
+            if entry['consumed']:
+                continue
+                
+            idx = entry['file_idx']
+            p = entry['file_path']
+            wi = entry['window_idx']
+            s = entry['local_start']
+            e = entry['local_end']
+            info = file_info[p]
             duration = info["duration"]
-            logger.info(f"[export] {cam}: {p.name}: {len(windows)} window(s)")
-
-            next_p = keys[idx + 1] if idx + 1 < len(keys) else None
-            next_info = file_info.get(next_p) if next_p else None
-            next_windows = list(next_info["windows"]) if next_info else []
-
-            consumed_next = set()
-
-            for wi, (s, e) in enumerate(windows):
-                tail_touch = (duration - e) <= TAIL_NEAR_END
-                head_touch_idx = None
-                if tail_touch and next_p and next_windows:
-                    for nwi, (ns, ne) in enumerate(next_windows):
-                        if ns <= HEAD_NEAR_START:
-                            head_touch_idx = nwi
-                            break
-
-                if head_touch_idx is not None:
+            
+            # Check if this motion clip already exists (temporal overlap check)
+            overlapping_outputs = find_overlapping_outputs(cam, p, s, e, produced)
+            if overlapping_outputs:
+                logger.info(f"[skip] {cam}: Window [{s:.3f},{e:.3f}] from {p.name} already covered by existing output(s)")
+                entry['consumed'] = True
+                continue
+            
+            # Check if this window touches the end of the current file
+            tail_touch = (duration - e) <= TAIL_NEAR_END
+            
+            # Look for continuation in subsequent files (can span multiple files)
+            files_to_concat = []
+            concat_segments = []
+            
+            if tail_touch:
+                # This motion touches the end of the file - look for continuation
+                files_to_concat.append(p)
+                concat_segments.append((s, duration))
+                entry['consumed'] = True
+                
+                # Look ahead through subsequent files for continuation
+                search_idx = idx + 1
+                while search_idx < len(keys):
+                    next_p = keys[search_idx]
+                    next_info = file_info[next_p]
+                    next_windows = next_info["windows"]
+                    next_duration = next_info["duration"]
+                    
+                    # Check if the next file has motion starting near the beginning
+                    found_continuation = False
+                    for next_entry in global_timeline:
+                        if (next_entry['file_idx'] == search_idx and 
+                            not next_entry['consumed'] and
+                            next_entry['local_start'] <= HEAD_NEAR_START):
+                            
+                            # Found continuation!
+                            ns = next_entry['local_start']
+                            ne = next_entry['local_end']
+                            
+                            # Add this segment
+                            files_to_concat.append(next_p)
+                            concat_segments.append((0.0, ne))
+                            next_entry['consumed'] = True
+                            found_continuation = True
+                            
+                            # Check if this also touches the end
+                            if (next_duration - ne) <= TAIL_NEAR_END:
+                                # Continue looking in the next file
+                                search_idx += 1
+                                break
+                            else:
+                                # Motion ends mid-file, stop searching
+                                search_idx = len(keys)
+                                break
+                    
+                    if not found_continuation:
+                        # No continuation found, stop searching
+                        break
+                
+                # Now concat all the segments if we found any continuation
+                if len(files_to_concat) > 1:
                     base = sanitize_name(p)
                     stamp = f"{int(time.time())}"
                     day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
                     day_dir = OUTPUT_DIR(cam) / day
                     day_dir.mkdir(parents=True, exist_ok=True)
-                    tmp1 = day_dir / f"._tmp_{base}_{wi}_{stamp}_a.mp4"
-                    tmp2 = day_dir / f"._tmp_{base}_{wi}_{stamp}_b.mp4"
-                    out = day_dir / f"{base}_{wi}_{stamp}_joined.mp4"
-                    logger.debug(f"[join] {cam}: tail->head across files: {p.name} -> {next_p.name}")
-
-                    ok1 = _run_ffmpeg_trim(p, s, duration, tmp1)
-                    ns, ne = next_windows[head_touch_idx]
-                    ok2 = _run_ffmpeg_trim(next_p, 0.0, ne, tmp2)
-                    if ok1 and ok2:
-                        ok = _ffmpeg_concat([tmp1, tmp2], out)
+                    
+                    # Create temp files for each segment
+                    temp_files = []
+                    all_ok = True
+                    
+                    for file_idx, (file_path, (seg_start, seg_end)) in enumerate(zip(files_to_concat, concat_segments)):
+                        tmp = day_dir / f"._tmp_{base}_{wi}_{stamp}_seg{file_idx}.mp4"
+                        temp_files.append(tmp)
+                        ok = _run_ffmpeg_trim(file_path, seg_start, seg_end, tmp)
+                        if not ok:
+                            all_ok = False
+                            break
+                    
+                    if all_ok:
+                        out = day_dir / f"{base}_{wi}_{stamp}_merged_{len(files_to_concat)}files.mp4"
+                        ok = _ffmpeg_concat(temp_files, out)
                         if ok:
-                            logger.info(f"[save] {cam}: {out.name}")
+                            logger.info(f"[save] {cam}: {out.name} (merged {len(files_to_concat)} files)")
                             produced.add(out.name)
-                            consumed_next.add(head_touch_idx)
-                    for t in (tmp1, tmp2):
+                    
+                    # Cleanup temp files
+                    for tmp in temp_files:
                         try:
-                            t.unlink(missing_ok=True)
+                            tmp.unlink(missing_ok=True)
                         except Exception:
                             pass
                 else:
+                    # Single file clip
                     base = sanitize_name(p)
                     stamp = f"{int(time.time())}"
                     day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
                     day_dir = OUTPUT_DIR(cam) / day
                     day_dir.mkdir(parents=True, exist_ok=True)
                     out = day_dir / f"{base}_{wi}_{stamp}.mp4"
+                    
                     if out.name in produced:
                         logger.debug(f"[dupe] {cam}: {out.name} already produced; skipping")
                         continue
+                    
                     logger.debug(f"[trim] {cam}: {p.name} [{s:.3f},{e:.3f}] -> {out.name}")
                     ok = _run_ffmpeg_trim(p, s, e, out)
                     if ok:
                         logger.info(f"[save] {cam}: {out.name}")
                         produced.add(out.name)
-
-            if next_p and consumed_next:
-                for nwi in consumed_next:
-                    next_windows[nwi] = (-1.0, -1.0)
-
+            else:
+                # Motion doesn't touch the end - simple trim
+                base = sanitize_name(p)
+                stamp = f"{int(time.time())}"
+                day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
+                day_dir = OUTPUT_DIR(cam) / day
+                day_dir.mkdir(parents=True, exist_ok=True)
+                out = day_dir / f"{base}_{wi}_{stamp}.mp4"
+                
+                if out.name in produced:
+                    logger.debug(f"[dupe] {cam}: {out.name} already produced; skipping")
+                    entry['consumed'] = True
+                    continue
+                
+                logger.debug(f"[trim] {cam}: {p.name} [{s:.3f},{e:.3f}] -> {out.name}")
+                ok = _run_ffmpeg_trim(p, s, e, out)
+                if ok:
+                    logger.info(f"[save] {cam}: {out.name}")
+                    produced.add(out.name)
+                entry['consumed'] = True
+            
+            # Mark source file as processed
             processed.add(str(p))
-            # Save progress incrementally, but prune first to avoid growth
+            
+            # Save progress incrementally
             processed, produced = _prune_state(cam, processed, produced, existing_inputs)
             state["processed_files"] = sorted(processed)
             state["produced_outputs"] = sorted(produced)
-            save_state(cam, state)  # ✅ Fixed
+            save_state(cam, state)
 
         # Camera timing summary
         scan_time = time.time() - scan_start
