@@ -64,7 +64,7 @@ def runCamera():
     video_config = picam2.create_video_configuration(main={"size": msize, "format": MAIN_FORMAT}, # format of recording
                                                     lores={"size": lsize, "format": "YUV420"}, # format of preview
                                                     controls={
-                                                        "AwbEnable": False, # disable auto white balance
+                                                        "AwbEnable": config.get("awbEnable", False), # auto white balance
                                                         "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
                                                     )
     
@@ -237,7 +237,10 @@ def runCamera():
                 video_config = picam2.create_video_configuration(
                     main={"size": msize, "format": MAIN_FORMAT},
                     lores={"size": lsize, "format": "YUV420"},
-                    controls={"ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])}
+                    controls={
+                        "AwbEnable": new_config.get("awbEnable", False),
+                        "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])
+                    }
                 )
                 video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
                 picam2.configure(video_config)
@@ -321,20 +324,22 @@ def runCamera():
                 prev = prev[:w * h].reshape(h, w).astype(np.int16)
                 skipNFrames = new_config["skippedFramesAfterChange"]
                 
-            # Update color gains if they changed (and resolution didn't)
+            # Update color gains or AWB if they changed (and resolution didn't)
             elif (config["colorOffset_red"] != new_config["colorOffset_red"] or
-                  config["colorOffset_blue"] != new_config["colorOffset_blue"]):
+                  config["colorOffset_blue"] != new_config["colorOffset_blue"] or
+                  config.get("awbEnable", False) != new_config.get("awbEnable", False)):
                 try:
                     picam2.set_controls({
+                        "AwbEnable": new_config.get("awbEnable", False),
                         "ColourGains": (
                             new_config["colorOffset_red"], 
                             new_config["colorOffset_blue"]
                         )
                     })
-                    logger.info("Updated color gains")
+                    logger.info("Updated AWB and color gains")
                     config.update(new_config)
                 except Exception as e:
-                    logger.error(f"Failed to update color gains: {e}")
+                    logger.error(f"Failed to update AWB/color gains: {e}")
                 
                 skipNFrames = new_config["skippedFramesAfterChange"]
             else:
