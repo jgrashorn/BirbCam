@@ -399,14 +399,20 @@ def runCamera():
                   config["colorOffset_blue"] != new_config["colorOffset_blue"] or
                   config.get("awbEnable", False) != new_config.get("awbEnable", False)):
                 try:
-                    picam2.set_controls({
-                        "AwbEnable": new_config.get("awbEnable", False),
-                        "ColourGains": (
-                            new_config["colorOffset_red"], 
-                            new_config["colorOffset_blue"]
-                        )
-                    })
-                    logger.info("Updated AWB and color gains")
+                    if new_config.get("awbEnable", False):
+                        # Enable AWB, don't set manual color gains
+                        picam2.set_controls({"AwbEnable": True})
+                        logger.info("Enabled auto white balance")
+                    else:
+                        # Disable AWB and set manual color gains
+                        picam2.set_controls({
+                            "AwbEnable": False,
+                            "ColourGains": (
+                                new_config["colorOffset_red"], 
+                                new_config["colorOffset_blue"]
+                            )
+                        })
+                        logger.info("Disabled AWB and set manual color gains")
                     config.update(new_config)
                 except Exception as e:
                     logger.error(f"Failed to update AWB/color gains: {e}")
