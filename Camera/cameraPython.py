@@ -47,10 +47,30 @@ def runCamera():
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
 
-    video_config = picam2.create_video_configuration(main={"size": msize, "format": "YUV420"}, # format of recording
+    props = picam2.camera_properties
+    logger.info(f"available formats: {props['PixelFormats']}")
+
+    def choose_main_format(picam2):
+        formats = picam2.camera_properties["PixelFormats"]
+
+        if "YUV420" in formats:
+            return "YUV420"
+        if "RGB888" in formats:
+            return "RGB888"
+
+        # absolute fallback
+        return formats[0]
+
+    MAIN_FORMAT = choose_main_format(picam2)
+    logger.info(f"choosing {MAIN_FORMAT}")
+
+    video_config = picam2.create_video_configuration(main={"size": msize, "format": MAIN_FORMAT}, # format of recording
                                                     lores={"size": lsize, "format": "YUV420"}, # format of preview
-                                                    controls={"ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
+                                                    controls={
+                                                        "AwbEnable": False, # disable auto white balance
+                                                        "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
                                                     )
+    
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
     
