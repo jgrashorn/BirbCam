@@ -161,6 +161,8 @@ def runCamera():
             
             # Choose encoder based on config
             encoder_type = config.get("encoderType", "h264").lower()
+
+            logger.info(f"Selected encoder type: {encoder_type}")
             
             if encoder_type == "mjpeg":
                 logger.info("Using MJPEG encoder")

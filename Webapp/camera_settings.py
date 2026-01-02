@@ -17,7 +17,6 @@ RESOLUTION_PRESETS = {
     'picamera2': [
         {'width': 1296, 'height': 972},
         {'width': 1920, 'height': 1080},
-        {'width': 2028, 'height': 1520, 'note': '(RPi HQ Camera)'},
     ],
     'ffmpeg': [
         {'width': 640, 'height': 480},
