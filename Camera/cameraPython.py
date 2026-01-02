@@ -23,6 +23,40 @@ def _rtsp_up(host, port, timeout=1.0):
     except OSError:
         return False
 
+def _detect_audio_available():
+    """Detect if PulseAudio is available and responding."""
+    try:
+        # Check if PulseAudio socket exists
+        pulse_socket = os.environ.get('PULSE_SERVER', '/run/user/1000/pulse/native')
+        if pulse_socket.startswith('/'):
+            if not os.path.exists(pulse_socket):
+                logger.info("PulseAudio socket not found, disabling audio")
+                return False
+        
+        # Try to query PulseAudio
+        result = subprocess.run(
+            ['pactl', 'info'],
+            capture_output=True,
+            timeout=2
+        )
+        
+        if result.returncode == 0:
+            logger.info("PulseAudio detected and responding")
+            return True
+        else:
+            logger.info("PulseAudio not responding, disabling audio")
+            return False
+            
+    except FileNotFoundError:
+        logger.info("pactl command not found, disabling audio")
+        return False
+    except subprocess.TimeoutExpired:
+        logger.info("PulseAudio query timeout, disabling audio")
+        return False
+    except Exception as e:
+        logger.warning(f"Audio detection failed: {e}, disabling audio")
+        return False
+
 def runCamera():
 
     os.environ['PULSE_SERVER'] = "/run/user/1000/pulse/native"
@@ -118,9 +152,13 @@ def runCamera():
                 enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
             except Exception:
                 pass
+            
+            # Detect audio availability
+            audio_available = _detect_audio_available()
+            
             out = FfmpegOutput(
                 f'-f rtsp -rtsp_transport tcp {rtsp_url}',
-                audio=True
+                audio=audio_available
             )
             # Start encoder with output
             try:
