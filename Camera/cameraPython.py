@@ -52,15 +52,12 @@ def runCamera():
     logger.info(f"available formats: {props['PixelFormats']}")
 
     def choose_main_format(picam2):
-        formats = picam2.camera_properties["PixelFormats"]
+        model = picam2["Model"]
 
-        if "YUV420" in formats:
-            return "YUV420"
-        if "RGB888" in formats:
+        if "IMX477" in model: # Raspberry Pi HQ Camera
             return "RGB888"
-
-        # absolute fallback
-        return formats[0]
+        else:
+            return "YUV420"  # prefer YUV for most cameras
 
     MAIN_FORMAT = choose_main_format(picam2)
     logger.info(f"choosing {MAIN_FORMAT}")
