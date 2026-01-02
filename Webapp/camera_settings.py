@@ -12,21 +12,22 @@ from pathlib import Path
 WEBAPP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Resolution presets for different camera types
+# Optional 'note' field adds descriptive text after the resolution
 RESOLUTION_PRESETS = {
     'picamera2': [
-        {'width': 1296, 'height': 972, 'label': '1296x972'},
-        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
-        {'width': 2028, 'height': 1520, 'label': '2028x1520 (RPi HQ Camera)'},
+        {'width': 1296, 'height': 972},
+        {'width': 1920, 'height': 1080},
+        {'width': 2028, 'height': 1520, 'note': '(RPi HQ Camera)'},
     ],
     'ffmpeg': [
-        {'width': 640, 'height': 480, 'label': '640x480'},
-        {'width': 1280, 'height': 720, 'label': '1280x720'},
-        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
+        {'width': 640, 'height': 480},
+        {'width': 1280, 'height': 720},
+        {'width': 1920, 'height': 1080},
     ],
     'unknown': [
-        {'width': 640, 'height': 480, 'label': '640x480'},
-        {'width': 1280, 'height': 720, 'label': '1280x720'},
-        {'width': 1920, 'height': 1080, 'label': '1920x1080'},
+        {'width': 640, 'height': 480},
+        {'width': 1280, 'height': 720},
+        {'width': 1920, 'height': 1080},
     ]
 }
 
@@ -288,7 +289,7 @@ def get_settings_metadata_for_camera(camera_name):
             'options': [
                 {
                     'value': f"{p['width']}x{p['height']}",
-                    'label': p.get('label', f"{p['width']}x{p['height']}")
+                    'label': f"{p['width']}x{p['height']}" + (f" {p['note']}" if 'note' in p else '')
                 }
                 for p in presets
             ],
