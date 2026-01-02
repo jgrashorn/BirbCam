@@ -235,7 +235,7 @@ def runCamera():
                 # Reconfigure camera
                 logger.info(f"Reconfiguring camera to {msize[0]}x{msize[1]}...")
                 video_config = picam2.create_video_configuration(
-                    main={"size": msize, "format": "YUV420"},
+                    main={"size": msize, "format": MAIN_FORMAT},
                     lores={"size": lsize, "format": "YUV420"},
                     controls={"ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])}
                 )
