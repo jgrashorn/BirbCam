@@ -78,7 +78,7 @@ def readServerConfig():
     except FileNotFoundError:
         logger.warning("server_settings.txt not found, using defaults")
         default_config = {
-            "serverIP": "192.168.178.38",
+            "serverIP": "0.0.0.0",
             "name": "camera",
             "rtspPort": 8554,
             "settingsPort": 5005

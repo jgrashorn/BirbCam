@@ -95,13 +95,24 @@ def runCamera():
     MAIN_FORMAT = choose_main_format(picam2)
     logger.info(f"choosing {MAIN_FORMAT}")
 
-    video_config = picam2.create_video_configuration(main={"size": msize, "format": MAIN_FORMAT}, # format of recording
-                                                    lores={"size": lsize, "format": "YUV420"}, # format of preview
-                                                    controls={
-                                                        "AwbEnable": config.get("awbEnable", False), # auto white balance
-                                                        "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
-                                                    )
+    video_config = None
+
+    if config.get("awbEnable", False):
+        video_config = picam2.create_video_configuration(
+            main={"size": msize, "format": MAIN_FORMAT}, # format of recording
+            lores={"size": lsize, "format": "YUV420"}, # format of preview
+            controls={
+                "AwbEnable": True, # auto white balance
+            }
+        )
     
+    else:
+        video_config = picam2.create_video_configuration(
+            main={"size": msize, "format": MAIN_FORMAT}, # format of recording
+            lores={"size": lsize, "format": "YUV420"}, # format of preview
+            controls={
+                "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
+        )
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
     
@@ -272,14 +283,24 @@ def runCamera():
                 
                 # Reconfigure camera
                 logger.info(f"Reconfiguring camera to {msize[0]}x{msize[1]}...")
-                video_config = picam2.create_video_configuration(
-                    main={"size": msize, "format": MAIN_FORMAT},
-                    lores={"size": lsize, "format": "YUV420"},
-                    controls={
-                        "AwbEnable": new_config.get("awbEnable", False),
-                        "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])
-                    }
-                )
+
+                if new_config.get("awbEnable", False):
+                    video_config = picam2.create_video_configuration(
+                        main={"size": msize, "format": MAIN_FORMAT}, # format of recording
+                        lores={"size": lsize, "format": "YUV420"}, # format of preview
+                        controls={
+                            "AwbEnable": True, # auto white balance
+                        }
+                    )
+                
+                else:
+                    video_config = picam2.create_video_configuration(
+                        main={"size": msize, "format": MAIN_FORMAT}, # format of recording
+                        lores={"size": lsize, "format": "YUV420"}, # format of preview
+                        controls={
+                            "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
+                    )
+                    
                 video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
                 picam2.configure(video_config)
                 
