@@ -51,7 +51,7 @@ def runCamera():
     logger.info(f"camera properties: {props}")
 
     def choose_main_format(picam2):
-        model = picam2["Model"]
+        model = picam2.camera_properties["Model"]
 
         if "IMX477" in model: # Raspberry Pi HQ Camera
             return "RGB888"
