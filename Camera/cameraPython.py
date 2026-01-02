@@ -53,7 +53,7 @@ def runCamera():
     def choose_main_format(picam2):
         model = picam2.camera_properties["Model"]
 
-        if "IMX477" in model: # Raspberry Pi HQ Camera
+        if "imx477" in model: # Raspberry Pi HQ Camera
             return "RGB888"
         else:
             return "YUV420"  # prefer YUV for most cameras
