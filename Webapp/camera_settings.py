@@ -17,7 +17,6 @@ RESOLUTION_PRESETS = {
         {'width': 1296, 'height': 972, 'label': '1296x972'},
         {'width': 1920, 'height': 1080, 'label': '1920x1080'},
         {'width': 2028, 'height': 1520, 'label': '2028x1520 (RPi HQ Camera)'},
-
     ],
     'ffmpeg': [
         {'width': 640, 'height': 480, 'label': '640x480'},
@@ -286,7 +285,13 @@ def get_settings_metadata_for_camera(camera_name):
             'label': 'Resolution',
             'description': 'Select camera resolution (width x height)',
             'current_value': current_resolution,
-            'options': [preset['label'] for preset in presets],
+            'options': [
+                {
+                    'value': f"{p['width']}x{p['height']}",
+                    'label': p.get('label', f"{p['width']}x{p['height']}")
+                }
+                for p in presets
+            ],
             'is_combined_setting': True,
             'combined_keys': ['width', 'height']
         }
