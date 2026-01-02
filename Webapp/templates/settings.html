@@ -249,12 +249,21 @@ function collectFormData() {
     const formData = new FormData(form);
     const config = {};
     
+    // First, collect all checkbox states (including unchecked ones)
+    const allInputs = form.querySelectorAll('input, select');
+    allInputs.forEach(input => {
+        if (input.type === 'checkbox') {
+            config[input.name || input.id] = input.checked;
+        }
+    });
+    
+    // Then process FormData entries (which won't include unchecked checkboxes)
     for (let [key, value] of formData.entries()) {
         const input = document.getElementById(key);
         
-        // Handle checkboxes
+        // Skip checkboxes - already handled above
         if (input && input.type === 'checkbox') {
-            config[key] = input.checked;
+            continue;
         }
         // Handle numbers
         else if (input && input.type === 'number') {

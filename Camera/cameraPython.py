@@ -8,7 +8,7 @@ import subprocess
 import numpy as np
 
 from picamera2 import Picamera2
-from picamera2.encoders import H264Encoder
+from picamera2.encoders import H264Encoder, MJPEGEncoder
 from picamera2.outputs import FfmpegOutput
 
 import libcamera
@@ -158,11 +158,20 @@ def runCamera():
         nonlocal encoder, streamOutput, rtsp_url
         try:
             logger.info(f"Starting RTSP encoder/output to {rtsp_url}")
-            enc = H264Encoder(2000000)
-            try:
-                enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
-            except Exception:
-                pass
+            
+            # Choose encoder based on config
+            encoder_type = config.get("encoderType", "h264").lower()
+            
+            if encoder_type == "mjpeg":
+                logger.info("Using MJPEG encoder")
+                enc = MJPEGEncoder()
+            else:
+                logger.info("Using H264 encoder")
+                enc = H264Encoder(2000000)
+                try:
+                    enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
+                except Exception:
+                    pass
             
             # Detect audio availability
             audio_available = _detect_audio_available()
@@ -300,7 +309,7 @@ def runCamera():
                         controls={
                             "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
                     )
-                    
+
                 video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
                 picam2.configure(video_config)
                 
