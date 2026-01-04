@@ -429,7 +429,8 @@ def runCamera():
             # Update color gains or AWB if they changed (and resolution didn't)
             elif (config["colorOffset_red"] != new_config["colorOffset_red"] or
                   config["colorOffset_blue"] != new_config["colorOffset_blue"] or
-                  config.get("awbEnable", False) != new_config.get("awbEnable", False)):
+                  config.get("awbEnable", False) != new_config.get("awbEnable", False) or
+                  config.get("autofocus", False) != new_config.get("autofocus", False)):
                 try:
                     if new_config.get("awbEnable", False):
                         # Enable AWB, don't set manual color gains
@@ -449,6 +450,20 @@ def runCamera():
                 except Exception as e:
                     logger.error(f"Failed to update AWB/color gains: {e}")
                 
+                if config.get("autofocus", False):
+                    try:
+                        picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
+                        logger.info("Autofocus enabled")
+                    except Exception as e:
+                        logger.error(f"Failed to enable autofocus: {e}")
+
+                else:
+                    try:
+                        picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
+                        logger.info("Autofocus disabled")
+                    except Exception as e:
+                        logger.error(f"Failed to disable autofocus: {e}")
+                        
                 skipNFrames = new_config["skippedFramesAfterChange"]
             else:
                 # Other config changes that don't need camera restart
