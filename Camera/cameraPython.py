@@ -374,6 +374,14 @@ def runCamera():
 
     bwMode = False # greyscale mode on/off
     picam2.set_controls({"Saturation": 1.0})
+
+    if config.get("autofocus", False):
+        try:
+            picam2.set_controls({"AfMode": libcamera.AfModeEnum.Continuous})
+            logger.info("Autofocus enabled")
+        except Exception as e:
+            logger.error(f"Failed to enable autofocus: {e}")
+
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
 
