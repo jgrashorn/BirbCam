@@ -115,6 +115,21 @@ def runCamera():
             controls={
                 "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
         )
+
+    if config.get("autofocus", False):
+        try:
+            picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
+            logger.info("Autofocus enabled")
+        except Exception as e:
+            logger.error(f"Failed to enable autofocus: {e}")
+
+    else:
+        try:
+            picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
+            logger.info("Autofocus enabled")
+        except Exception as e:
+            logger.error(f"Failed to enable autofocus: {e}")
+
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
     
@@ -314,6 +329,20 @@ def runCamera():
                             "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
                     )
 
+                if new_config.get("autofocus", False):
+                    try:
+                        picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
+                        logger.info("Autofocus enabled")
+                    except Exception as e:
+                        logger.error(f"Failed to enable autofocus: {e}")
+
+                else:
+                    try:
+                        picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
+                        logger.info("Autofocus enabled")
+                    except Exception as e:
+                        logger.error(f"Failed to enable autofocus: {e}")
+
                 video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
                 picam2.configure(video_config)
                 
@@ -374,13 +403,6 @@ def runCamera():
 
     bwMode = False # greyscale mode on/off
     picam2.set_controls({"Saturation": 1.0})
-
-    if config.get("autofocus", False):
-        try:
-            picam2.set_controls({"AfMode": 1 ,"AfTrigger": 0}) # single autofocus
-            logger.info("Autofocus enabled")
-        except Exception as e:
-            logger.error(f"Failed to enable autofocus: {e}")
 
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
