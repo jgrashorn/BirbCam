@@ -196,7 +196,7 @@ def runCamera():
             audio_available = _detect_audio_available()
             
             out = FfmpegOutput(
-                f'-fflags +genpts -f rtsp -rtsp_transport tcp {rtsp_url}',
+                f' -use_wallclock_as_timestamps 1 -f rtsp -rtsp_transport tcp {rtsp_url}',
                 audio=audio_available
             )
             # Start encoder with output
