@@ -11,7 +11,9 @@ Client streams video and audio via an ffmpeg rtsp stream to the server.
 
 `sudo apt upgrade`
 
-`sudo apt install git`
+`sudo apt install git ffmpeg`
+
+`git clone https://github.com/jgrashorn/BirbCam.git`
 
 ## Install picamera2
 https://pypi.org/project/picamera2/
@@ -23,15 +25,15 @@ Full installation:
 `sudo apt install python3-picamera2`
 
 ## picamera2 in virtual environment
-`python3 -m venv --system-site-packages /home/birb/BirbCam/Camera/.venv`
+`python3 -m venv --system-site-packages /path/to/BirbCam/Camera/.venv`
 
 ## config
 rename config_default.txt to config.txt
 
 ## start
-`source /home/birb/BirbCam/Camera/.venv/bin/activate`
+`source /path/to/BirbCam/Camera/.venv/bin/activate`
 
-`python /home/birb/BirbCam/Camera/cameraPython.py`
+`python /path/to/BirbCam/Camera/cameraPython.py`
 
 ## systemd-services
 
