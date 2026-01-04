@@ -5,14 +5,26 @@ After trying for weeks with ffmpeg, libcamera, picamera, frigate and whatever el
 
 Client streams video and audio via an ffmpeg rtsp stream to the server.
 
+# Installation (assuming fresh install of Raspbian on a Pi Zero 2 W with user birb)
+
+`sudo apt update`
+`sudo apt upgrade`
+`sudo apt install git`
+
 ## Install picamera2
 https://pypi.org/project/picamera2/
 
+Headless version:
+`sudo apt install python3-picamera2 --no-install-recommends`
+
+Full installation:
+`sudo apt install python3-picamera2`
+
 ## picamera2 in virtual environment
-`python3 -m venv --system-site-packages .venv`
+`python3 -m venv --system-site-packages /home/birb/BirbCam/Camera/.venv`
 
 ## config
-rename config_default.txt, change Server address, port, sensitivities etc.
+rename config_default.txt to config.txt
 
 ## systemd-services
 
