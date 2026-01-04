@@ -1,13 +1,12 @@
-{	
-  "width": 1296,
-  "height": 972,
-
-	"bwSwitchingSensitivity": 1500,
-	"clrSwitchingSensitivity": 1800,
-	"skippedFramesAfterChange": 50,
-
-	"audioDelay": -0.3,
-	"colorOffset_red": 0.8,
-	"colorOffset_blue": 1.5,
-    "awbEnable": False
+{
+    "awbEnable": true,
+    "bwSwitchingSensitivity": 0,
+    "clrSwitchingSensitivity": 0,
+    "skippedFramesAfterChange": 50,
+    "audioDelay": -0.3,
+    "colorOffset_red": 1,
+    "colorOffset_blue": 1,
+    "encoderType": "h264",
+    "width": 1920,
+    "height": 1080
 }
