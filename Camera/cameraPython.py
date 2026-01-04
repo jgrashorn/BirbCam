@@ -89,6 +89,8 @@ def runCamera():
 
         if "imx477" in model: # Raspberry Pi HQ Camera
             return "RGB888"
+        elif "imx708_wide_noir" in model: # Raspberry Pi HQ Camera V3 NoIR
+            return "RGB888"
         else:
             return "YUV420"  # prefer YUV for most cameras
 
