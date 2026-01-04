@@ -8,7 +8,9 @@ Client streams video and audio via an ffmpeg rtsp stream to the server.
 # Installation (assuming fresh install of Raspbian on a Pi Zero 2 W with user birb)
 
 `sudo apt update`
+
 `sudo apt upgrade`
+
 `sudo apt install git`
 
 ## Install picamera2
@@ -25,6 +27,11 @@ Full installation:
 
 ## config
 rename config_default.txt to config.txt
+
+## start
+`source /home/birb/BirbCam/Camera/.venv/bin/activate`
+
+`python /home/birb/BirbCam/Camera/cameraPython.py`
 
 ## systemd-services
 
