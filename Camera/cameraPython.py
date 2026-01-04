@@ -196,7 +196,7 @@ def runCamera():
             audio_available = _detect_audio_available()
             
             out = FfmpegOutput(
-                f'-f rtsp -rtsp_transport tcp {rtsp_url}',
+                f'-fflags +genpts -f rtsp -rtsp_transport tcp {rtsp_url}',
                 audio=audio_available
             )
             # Start encoder with output
@@ -463,7 +463,7 @@ def runCamera():
                         logger.info("Autofocus disabled")
                     except Exception as e:
                         logger.error(f"Failed to disable autofocus: {e}")
-                        
+
                 skipNFrames = new_config["skippedFramesAfterChange"]
             else:
                 # Other config changes that don't need camera restart
