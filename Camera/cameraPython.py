@@ -377,7 +377,7 @@ def runCamera():
 
     if config.get("autofocus", False):
         try:
-            picam2.set_controls({"AfMode": libcamera.AfModeEnum.Continuous})
+            picam2.set_controls({"AfMode": 1 ,"AfTrigger": 0}) # single autofocus
             logger.info("Autofocus enabled")
         except Exception as e:
             logger.error(f"Failed to enable autofocus: {e}")
