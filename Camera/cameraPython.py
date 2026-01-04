@@ -90,7 +90,7 @@ def runCamera():
         if "imx477" in model: # Raspberry Pi HQ Camera
             return "RGB8888"
         elif "imx708" in model: # Raspberry Pi Camera Module v3 (all variants)
-            return "XBGR8888"
+            return "YUV420"
         else:
             return "YUV420"  # prefer YUV for most cameras
 
