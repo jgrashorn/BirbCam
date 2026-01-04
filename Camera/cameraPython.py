@@ -88,9 +88,9 @@ def runCamera():
         model = picam2.camera_properties["Model"]
 
         if "imx477" in model: # Raspberry Pi HQ Camera
-            return "RGB888"
-        elif "imx708_wide_noir" in model: # Raspberry Pi HQ Camera V3 NoIR
-            return "RGB888"
+            return "RGB8888"
+        elif "imx708" in model: # Raspberry Pi Camera Module v3 (all variants)
+            return "XBGR8888"
         else:
             return "YUV420"  # prefer YUV for most cameras
 
