@@ -507,11 +507,24 @@ def detect_motion_windows(video_path: Path) -> Tuple[List[Tuple[float, float]], 
         bs = max(0.0, s - PRE_BUFFER)
         be = min(duration, e + POST_BUFFER)
         buffered.append((bs, be))
+    
+    # Merge buffered windows that overlap (this prevents duplicate/overlapping videos)
+    final_windows: List[Tuple[float, float]] = []
+    for s, e in sorted(buffered):
+        if not final_windows:
+            final_windows.append((s, e))
+            continue
+        ls, le = final_windows[-1]
+        if s <= le:  # Overlapping or touching windows
+            final_windows[-1] = (ls, max(le, e))
+        else:
+            final_windows.append((s, e))
+    
     buffer_time = time.time() - buffer_start
 
     logger.info(f"[timing] {video_path.name} POST-PROCESS: merge={merge_time:.4f}s, buffer={buffer_time:.4f}s")
-    logger.info(f"[windows] {video_path.name}: {len(buffered)} window(s) -> {buffered}")
-    return buffered, duration
+    logger.info(f"[windows] {video_path.name}: {len(buffered)} buffered -> {len(final_windows)} final window(s) -> {final_windows}")
+    return final_windows, duration
 
 def _run_ffmpeg_trim(src: Path, start: float, end: float, dst: Path, reencode_fallback=True) -> bool:
     trim_start_time = time.time()
@@ -644,7 +657,7 @@ def _ffmpeg_concat(filelist: List[Path], dst: Path) -> bool:
 
 def sanitize_name(p: Path) -> str:
     parts = list(p.parts)
-    tokens = parts[-3:-1] + [p.stem]
+    tokens = parts[-2:-1] + [p.stem]
     return "_".join(tokens)
 
 def parse_timestamp_from_filename(filename: str) -> tuple[float, float] | None:
@@ -794,6 +807,7 @@ def process_once():
         state = load_state(cam)
         processed = set(state.get("processed_files", []))
         produced = set(state.get("produced_outputs", []))
+        logger.info(f"[state] {cam}: loaded state with {len(processed)} processed files and {len(produced)} produced outputs")
         setup_time = time.time() - setup_start
 
         # File discovery phase
@@ -836,6 +850,13 @@ def process_once():
             try:
                 windows, dur = detect_motion_windows(p)
                 file_info[p] = {"windows": windows, "duration": dur}
+                
+                # Mark file as processed even if no motion detected
+                processed.add(str(p))
+                
+                if not windows:
+                    logger.debug(f"[no-motion] {cam}: {p.name} - no motion detected, marked as processed")
+                    
             except Exception as e:
                 logger.exception(f"[error] {cam}: scanning {p}: {e}")
 
@@ -940,7 +961,6 @@ def process_once():
                 # Now concat all the segments if we found any continuation
                 if len(files_to_concat) > 1:
                     base = sanitize_name(p)
-                    stamp = f"{int(time.time())}"
                     day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
                     day_dir = OUTPUT_DIR(cam) / day
                     day_dir.mkdir(parents=True, exist_ok=True)
@@ -950,7 +970,7 @@ def process_once():
                     all_ok = True
                     
                     for file_idx, (file_path, (seg_start, seg_end)) in enumerate(zip(files_to_concat, concat_segments)):
-                        tmp = day_dir / f"._tmp_{base}_{wi}_{stamp}_seg{file_idx}.mp4"
+                        tmp = day_dir / f"._tmp_{base}_{wi}_seg{file_idx}.mp4"
                         temp_files.append(tmp)
                         ok = _run_ffmpeg_trim(file_path, seg_start, seg_end, tmp)
                         if not ok:
@@ -958,7 +978,7 @@ def process_once():
                             break
                     
                     if all_ok:
-                        out = day_dir / f"{base}_{wi}_{stamp}_merged_{len(files_to_concat)}files.mp4"
+                        out = day_dir / f"{base}_{wi}_merged_{len(files_to_concat)}files.mp4"
                         ok = _ffmpeg_concat(temp_files, out)
                         if ok:
                             logger.info(f"[save] {cam}: {out.name} (merged {len(files_to_concat)} files)")
@@ -973,11 +993,10 @@ def process_once():
                 else:
                     # Single file clip
                     base = sanitize_name(p)
-                    stamp = f"{int(time.time())}"
                     day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
                     day_dir = OUTPUT_DIR(cam) / day
                     day_dir.mkdir(parents=True, exist_ok=True)
-                    out = day_dir / f"{base}_{wi}_{stamp}.mp4"
+                    out = day_dir / f"{base}_{wi}.mp4"
                     
                     if out.name in produced:
                         logger.debug(f"[dupe] {cam}: {out.name} already produced; skipping")
@@ -991,11 +1010,10 @@ def process_once():
             else:
                 # Motion doesn't touch the end - simple trim
                 base = sanitize_name(p)
-                stamp = f"{int(time.time())}"
                 day = time.strftime("%Y-%m-%d", time.localtime(p.stat().st_mtime))
                 day_dir = OUTPUT_DIR(cam) / day
                 day_dir.mkdir(parents=True, exist_ok=True)
-                out = day_dir / f"{base}_{wi}_{stamp}.mp4"
+                out = day_dir / f"{base}_{wi}.mp4"
                 
                 if out.name in produced:
                     logger.debug(f"[dupe] {cam}: {out.name} already produced; skipping")
@@ -1009,13 +1027,11 @@ def process_once():
                     produced.add(out.name)
                 entry['consumed'] = True
             
-            # Mark source file as processed
-            processed.add(str(p))
-            
             # Save progress incrementally
             processed, produced = _prune_state(cam, processed, produced, existing_inputs)
             state["processed_files"] = sorted(processed)
             state["produced_outputs"] = sorted(produced)
+            logger.info(f"[state] {cam}: saved progress: {len(processed)} processed, {len(produced)} produced")
             save_state(cam, state)
 
         # Camera timing summary
