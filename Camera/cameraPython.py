@@ -126,9 +126,9 @@ def runCamera():
     else:
         try:
             picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
-            logger.info("Autofocus enabled")
+            logger.info("Autofocus disabled")
         except Exception as e:
-            logger.error(f"Failed to enable autofocus: {e}")
+            logger.error(f"Failed to disable autofocus: {e}")
 
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
@@ -339,9 +339,9 @@ def runCamera():
                 else:
                     try:
                         picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
-                        logger.info("Autofocus enabled")
+                        logger.info("Autofocus disabled")
                     except Exception as e:
-                        logger.error(f"Failed to enable autofocus: {e}")
+                        logger.error(f"Failed to disable autofocus: {e}")
 
                 video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
                 picam2.configure(video_config)
