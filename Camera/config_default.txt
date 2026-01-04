@@ -8,5 +8,6 @@
 
 	"audioDelay": -0.3,
 	"colorOffset_red": 0.8,
-	"colorOffset_blue": 1.5
+	"colorOffset_blue": 1.5,
+    "awbEnable": False
 }
