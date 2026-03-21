@@ -45,9 +45,13 @@ It is absolutely important to keep `pulseaudio` running when the user is logged 
 Here is what I did (I think, this is based on bash's history):
 
 ```
-loginctl enable-linger <user>
+udo apt update
+sudo apt upgrade
+sudo apt install pulseaudio
+
+loginctl enable-linger <userid>
 sudo systemctl start user@<userid>.service
-sudo -u <user> systemctl --user enable --now pulseaudio.socket pulseaudio.service
+sudo -u <user> XDG_RUNTIME_DIR=/run/user/<userid> systemctl --user enable --now pulseaudio.socket pulseaudio.service
 ```
 
 `<userid>` is the user's ID (`id -u <user>`)
