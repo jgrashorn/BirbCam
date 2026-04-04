@@ -133,9 +133,14 @@ def runCamera():
     # transforms if camera is not oriented right side up
     video_config["transform"] = libcamera.Transform(hflip=config.get("hflip", 0), vflip=config.get("vflip", 0))
 
-    picam2.set_controls({"FrameRate": config.get("framerate", 30)})
+    picam2.set_controls({"FrameDurationLimits": (1/config.get("framerate", 30)*1000000, 1/config.get("framerate", 30)*1000000)})
     
     picam2.configure(video_config)
+
+    min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
+    min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
+    logger.info(f"ExposureTime range: {min_exp} - {max_exp}, default: {default_exp}")
+    logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
 
     # --- self-healing RTSP publisher ---
     encoder_lock = threading.Lock()
