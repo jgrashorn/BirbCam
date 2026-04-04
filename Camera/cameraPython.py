@@ -345,7 +345,9 @@ def runCamera():
                     except Exception as e:
                         logger.error(f"Failed to disable autofocus: {e}")
 
-                video_config["transform"] = libcamera.Transform(hflip=0, vflip=0)
+                video_config["transform"] = libcamera.Transform(hflip=config.get("hflip", 0), vflip=config.get("vflip", 0))
+                picam2.set_controls({"FrameRate": config.get("framerate", 30)})
+                
                 picam2.configure(video_config)
                 
                 # Restart camera
