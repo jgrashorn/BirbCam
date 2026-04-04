@@ -1,9 +1,0 @@
-{
-    "width": 1920,
-    "height": 1080,
-    "framerate": 25,
-    "bitrate": "3000k",
-    "preset": "ultrafast",
-    "inputFormat": "mjpeg",
-    "videoDevice": "/dev/video0"
-}

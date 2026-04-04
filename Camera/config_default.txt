@@ -3,10 +3,13 @@
     "bwSwitchingSensitivity": 0,
     "clrSwitchingSensitivity": 0,
     "skippedFramesAfterChange": 50,
+    "framerate": 30,
     "audioDelay": -0.3,
     "colorOffset_red": 1.0,
     "colorOffset_blue": 1.0,
     "encoderType": "h264",
     "width": 1920,
-    "height": 1080
+    "height": 1080,
+    "hflip": false,
+    "vflip": false
 }
