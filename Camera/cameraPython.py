@@ -97,6 +97,12 @@ def runCamera():
     MAIN_FORMAT = choose_main_format(picam2)
     logger.info(f"choosing {MAIN_FORMAT}")
 
+    def build_transform(camera_config):
+        return libcamera.Transform(
+            hflip=bool(camera_config.get("hflip", 0)),
+            vflip=bool(camera_config.get("vflip", 0))
+        )
+
     video_config = None
 
     if config.get("awbEnable", False):
@@ -131,7 +137,7 @@ def runCamera():
             logger.error(f"Failed to disable autofocus: {e}")
 
     # transforms if camera is not oriented right side up
-    video_config["transform"] = libcamera.Transform(hflip=config.get("hflip", 0), vflip=config.get("vflip", 0))
+    video_config["transform"] = build_transform(config)
 
     picam2.set_controls({"FrameDurationLimits": (1/config.get("framerate", 30)*1000000, 1/config.get("framerate", 30)*1000000)})
     
@@ -350,8 +356,8 @@ def runCamera():
                     except Exception as e:
                         logger.error(f"Failed to disable autofocus: {e}")
 
-                video_config["transform"] = libcamera.Transform(hflip=config.get("hflip", 0), vflip=config.get("vflip", 0))
-                picam2.set_controls({"FrameRate": config.get("framerate", 30)})
+                video_config["transform"] = build_transform(new_config)
+                picam2.set_controls({"FrameRate": new_config.get("framerate", 30)})
                 
                 picam2.configure(video_config)
                 
@@ -422,10 +428,28 @@ def runCamera():
             logger.info("Configuration changed, reloading...")
             new_config = birdCamera.getCurrentConfig()
             
-            # Check if resolution changed (requires camera reconfiguration)
-            if (config["width"] != new_config["width"] or
-                config["height"] != new_config["height"]):
-                logger.info(f"Resolution changed from {config['width']}x{config['height']} to {new_config['width']}x{new_config['height']}")
+            # Check if resolution or transform changed (requires camera reconfiguration)
+            resolution_changed = (
+                config["width"] != new_config["width"] or
+                config["height"] != new_config["height"]
+            )
+            transform_changed = (
+                config.get("vflip", 0) != new_config.get("vflip", 0) or
+                config.get("hflip", 0) != new_config.get("hflip", 0)
+            )
+
+            if resolution_changed or transform_changed:
+                if resolution_changed:
+                    logger.info(
+                        f"Resolution changed from {config['width']}x{config['height']} to "
+                        f"{new_config['width']}x{new_config['height']}"
+                    )
+                if transform_changed:
+                    logger.info(
+                        f"Flip settings changed to hflip={new_config.get('hflip', 0)}, "
+                        f"vflip={new_config.get('vflip', 0)}"
+                    )
+
                 # Signal stream manager to handle the reconfiguration
                 reconfigure_camera.set()
                 # Wait a bit for the camera to be restarted
@@ -475,17 +499,6 @@ def runCamera():
 
                 skipNFrames = new_config["skippedFramesAfterChange"]
 
-            elif (config["vflip"] != new_config["vflip"] or
-                  config["hflip"] != new_config["hflip"]):
-                try:
-                    picam2.set_controls({
-                        "vflip": new_config["vflip"],
-                        "hflip": new_config["hflip"]
-                    })
-                    logger.info("Updated flip settings")
-                    config.update(new_config)
-                except Exception as e:
-                    logger.error(f"Failed to update flip settings: {e}")
             else:
                 # Other config changes that don't need camera restart
                 config.update(new_config)
