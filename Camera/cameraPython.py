@@ -103,45 +103,60 @@ def runCamera():
             vflip=bool(camera_config.get("vflip", 0))
         )
 
-    video_config = None
+    def build_frame_duration_limits(camera_config):
+        framerate = max(float(camera_config.get("framerate", 30) or 30), 1.0)
+        frame_duration_us = int(1_000_000 / framerate)
+        return (frame_duration_us, frame_duration_us)
 
-    if config.get("awbEnable", False):
+    def build_video_config(camera_config):
+        controls = {
+            "FrameDurationLimits": build_frame_duration_limits(camera_config),
+        }
+
+        if camera_config.get("awbEnable", False):
+            controls["AwbEnable"] = True
+        else:
+            controls["AwbEnable"] = False
+            controls["ColourGains"] = (
+                camera_config["colorOffset_red"],
+                camera_config["colorOffset_blue"],
+            )
+
         video_config = picam2.create_video_configuration(
-            main={"size": msize, "format": MAIN_FORMAT}, # format of recording
-            lores={"size": lsize, "format": "YUV420"}, # format of preview
-            controls={
-                "AwbEnable": True, # auto white balance
-            }
+            main={"size": (camera_config["width"], camera_config["height"]), "format": MAIN_FORMAT},
+            lores={"size": lsize, "format": "YUV420"},
+            controls=controls,
         )
-    
-    else:
-        video_config = picam2.create_video_configuration(
-            main={"size": msize, "format": MAIN_FORMAT}, # format of recording
-            lores={"size": lsize, "format": "YUV420"}, # format of preview
-            controls={
-                "ColourGains": (config["colorOffset_red"], config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
+        video_config["transform"] = build_transform(camera_config)
+        return video_config
+
+    def apply_runtime_camera_settings(camera_config):
+        try:
+            picam2.set_controls({
+                "FrameDurationLimits": build_frame_duration_limits(camera_config)
+            })
+            logger.info(f"Applied frame duration limits for {camera_config.get('framerate', 30)} FPS")
+        except Exception as e:
+            logger.error(f"Failed to apply frame duration limits: {e}")
+
+        try:
+            af_mode = 2 if camera_config.get("autofocus", False) else 0
+            picam2.set_controls({"AfMode": af_mode, "AfTrigger": 0})
+            logger.info("Autofocus enabled" if af_mode == 2 else "Autofocus disabled")
+        except Exception as e:
+            logger.error(f"Failed to apply autofocus settings: {e}")
+
+    def configure_camera(camera_config):
+        nonlocal msize
+        msize = (camera_config["width"], camera_config["height"])
+        video_config = build_video_config(camera_config)
+        picam2.configure(video_config)
+        logger.info(
+            f"Configured camera: {msize[0]}x{msize[1]} @ {camera_config.get('framerate', 30)} FPS, "
+            f"hflip={camera_config.get('hflip', 0)}, vflip={camera_config.get('vflip', 0)}"
         )
 
-    if config.get("autofocus", False):
-        try:
-            picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
-            logger.info("Autofocus enabled")
-        except Exception as e:
-            logger.error(f"Failed to enable autofocus: {e}")
-
-    else:
-        try:
-            picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
-            logger.info("Autofocus disabled")
-        except Exception as e:
-            logger.error(f"Failed to disable autofocus: {e}")
-
-    # transforms if camera is not oriented right side up
-    video_config["transform"] = build_transform(config)
-
-    picam2.set_controls({"FrameDurationLimits": (1/config.get("framerate", 30)*1000000, 1/config.get("framerate", 30)*1000000)})
-    
-    picam2.configure(video_config)
+    configure_camera(config)
 
     min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
     min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
@@ -323,46 +338,15 @@ def runCamera():
                 msize = (new_config["width"], new_config["height"])
                 
                 # Reconfigure camera
-                logger.info(f"Reconfiguring camera to {msize[0]}x{msize[1]}...")
+                logger.info(
+                    f"Reconfiguring camera to {new_config['width']}x{new_config['height']} "
+                    f"at {new_config.get('framerate', 30)} FPS..."
+                )
+                configure_camera(new_config)
 
-                if new_config.get("awbEnable", False):
-                    video_config = picam2.create_video_configuration(
-                        main={"size": msize, "format": MAIN_FORMAT}, # format of recording
-                        lores={"size": lsize, "format": "YUV420"}, # format of preview
-                        controls={
-                            "AwbEnable": True, # auto white balance
-                        }
-                    )
-                
-                else:
-                    video_config = picam2.create_video_configuration(
-                        main={"size": msize, "format": MAIN_FORMAT}, # format of recording
-                        lores={"size": lsize, "format": "YUV420"}, # format of preview
-                        controls={
-                            "ColourGains": (new_config["colorOffset_red"], new_config["colorOffset_blue"])} # color correction for IR-cams, (r, b)
-                    )
-
-                if new_config.get("autofocus", False):
-                    try:
-                        picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
-                        logger.info("Autofocus enabled")
-                    except Exception as e:
-                        logger.error(f"Failed to enable autofocus: {e}")
-
-                else:
-                    try:
-                        picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
-                        logger.info("Autofocus disabled")
-                    except Exception as e:
-                        logger.error(f"Failed to disable autofocus: {e}")
-
-                video_config["transform"] = build_transform(new_config)
-                picam2.set_controls({"FrameRate": new_config.get("framerate", 30)})
-                
-                picam2.configure(video_config)
-                
                 # Restart camera
                 picam2.start()
+                apply_runtime_camera_settings(new_config)
                 logger.info("Camera reconfigured and restarted")
                 
                 # Update config reference
@@ -409,6 +393,7 @@ def runCamera():
 
     # Start camera and manager; encoder will start when RTSP is reachable
     picam2.start()
+    apply_runtime_camera_settings(config)
     threading.Thread(target=stream_manager, daemon=True).start()
 
     w, h = lsize
@@ -463,7 +448,8 @@ def runCamera():
             elif (config["colorOffset_red"] != new_config["colorOffset_red"] or
                   config["colorOffset_blue"] != new_config["colorOffset_blue"] or
                   config.get("awbEnable", False) != new_config.get("awbEnable", False) or
-                  config.get("autofocus", False) != new_config.get("autofocus", False)):
+                  config.get("autofocus", False) != new_config.get("autofocus", False) or
+                  config.get("framerate", 30) != new_config.get("framerate", 30)):
                 try:
                     if new_config.get("awbEnable", False):
                         # Enable AWB, don't set manual color gains
@@ -479,23 +465,11 @@ def runCamera():
                             )
                         })
                         logger.info("Disabled AWB and set manual color gains")
+
+                    apply_runtime_camera_settings(new_config)
                     config.update(new_config)
                 except Exception as e:
-                    logger.error(f"Failed to update AWB/color gains: {e}")
-                
-                if config.get("autofocus", False):
-                    try:
-                        picam2.set_controls({"AfMode": 2 ,"AfTrigger": 0}) # single autofocus
-                        logger.info("Autofocus enabled")
-                    except Exception as e:
-                        logger.error(f"Failed to enable autofocus: {e}")
-
-                else:
-                    try:
-                        picam2.set_controls({"AfMode": 0 ,"AfTrigger": 0}) # single autofocus
-                        logger.info("Autofocus disabled")
-                    except Exception as e:
-                        logger.error(f"Failed to disable autofocus: {e}")
+                    logger.error(f"Failed to update camera controls: {e}")
 
                 skipNFrames = new_config["skippedFramesAfterChange"]
 
