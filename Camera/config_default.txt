@@ -4,8 +4,8 @@
     "clrSwitchingSensitivity": 0,
     "skippedFramesAfterChange": 50,
     "audioDelay": -0.3,
-    "colorOffset_red": 1,
-    "colorOffset_blue": 1,
+    "colorOffset_red": 1.0,
+    "colorOffset_blue": 1.0,
     "encoderType": "h264",
     "width": 1920,
     "height": 1080
