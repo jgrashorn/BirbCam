@@ -81,6 +81,12 @@ def runCamera():
     msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
 
+    encoder_lock = threading.Lock()
+    camera_lock = threading.RLock()
+    encoder = None
+    streamOutput = None
+    streaming = {"running": False}
+
     props = picam2.camera_properties
     logger.info(f"camera properties: {props}")
 
@@ -132,16 +138,18 @@ def runCamera():
 
     def apply_runtime_camera_settings(camera_config):
         try:
-            picam2.set_controls({
-                "FrameDurationLimits": build_frame_duration_limits(camera_config)
-            })
+            with camera_lock:
+                picam2.set_controls({
+                    "FrameDurationLimits": build_frame_duration_limits(camera_config)
+                })
             logger.info(f"Applied frame duration limits for {camera_config.get('framerate', 30)} FPS")
         except Exception as e:
             logger.error(f"Failed to apply frame duration limits: {e}")
 
         try:
             af_mode = 2 if camera_config.get("autofocus", False) else 0
-            picam2.set_controls({"AfMode": af_mode, "AfTrigger": 0})
+            with camera_lock:
+                picam2.set_controls({"AfMode": af_mode, "AfTrigger": 0})
             logger.info("Autofocus enabled" if af_mode == 2 else "Autofocus disabled")
         except Exception as e:
             logger.error(f"Failed to apply autofocus settings: {e}")
@@ -150,11 +158,36 @@ def runCamera():
         nonlocal msize
         msize = (camera_config["width"], camera_config["height"])
         video_config = build_video_config(camera_config)
-        picam2.configure(video_config)
+        with camera_lock:
+            picam2.configure(video_config)
         logger.info(
             f"Configured camera: {msize[0]}x{msize[1]} @ {camera_config.get('framerate', 30)} FPS, "
             f"hflip={camera_config.get('hflip', 0)}, vflip={camera_config.get('vflip', 0)}"
         )
+
+    def reconfigure_camera_pipeline(new_config):
+        logger.info(
+            f"Synchronously rebuilding camera pipeline for {new_config['width']}x{new_config['height']} "
+            f"at {new_config.get('framerate', 30)} FPS"
+        )
+        with encoder_lock:
+            if streaming["running"]:
+                stop_stream()
+
+            with camera_lock:
+                try:
+                    logger.info("Stopping camera...")
+                    picam2.stop()
+                except Exception as e:
+                    logger.error(f"Error stopping camera: {e}")
+
+                configure_camera(new_config)
+                picam2.start()
+
+            apply_runtime_camera_settings(new_config)
+
+        config.update(new_config)
+        logger.info("Camera reconfigured and restarted")
 
     configure_camera(config)
 
@@ -164,12 +197,6 @@ def runCamera():
     logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
 
     # --- self-healing RTSP publisher ---
-    encoder_lock = threading.Lock()
-    encoder = None
-    streamOutput = None
-    streaming = {"running": False}
-    reconfigure_camera = threading.Event()  # Signal for camera reconfiguration
-
     rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
 
     # Replace pgrep with a /proc scan (more reliable, no shell)
@@ -228,15 +255,16 @@ def runCamera():
                 audio=audio_available
             )
             # Start encoder with output
-            try:
-                Picamera2.start_encoder  # probe existence
-                picam2.start_encoder(enc, out)
-            except TypeError:
-                enc.output = out
-                picam2.start_encoder()
-            except AttributeError:
-                enc.output = out
-                picam2.start_encoder()
+            with camera_lock:
+                try:
+                    Picamera2.start_encoder  # probe existence
+                    picam2.start_encoder(enc, out)
+                except TypeError:
+                    enc.output = out
+                    picam2.start_encoder()
+                except AttributeError:
+                    enc.output = out
+                    picam2.start_encoder()
 
             # give ffmpeg a moment to spawn, then locate pid
             time.sleep(0.5)
@@ -257,10 +285,11 @@ def runCamera():
         nonlocal encoder, streamOutput
         try:
             logger.info("Stopping RTSP encoder/output")
-            try:
-                picam2.stop_encoder()
-            except Exception:
-                pass
+            with camera_lock:
+                try:
+                    picam2.stop_encoder()
+                except Exception:
+                    pass
             try:
                 if hasattr(streamOutput, "stop"):
                     streamOutput.stop()
@@ -319,47 +348,6 @@ def runCamera():
                 else:
                     server_config = new_server_config
             
-            # Check if camera reconfiguration is needed
-            if reconfigure_camera.is_set():
-                logger.info("Camera reconfiguration requested, stopping stream...")
-                with encoder_lock:
-                    if streaming["running"]:
-                        stop_stream()
-                
-                # Stop camera
-                try:
-                    logger.info("Stopping camera...")
-                    picam2.stop()
-                except Exception as e:
-                    logger.error(f"Error stopping camera: {e}")
-                
-                # Get latest config
-                new_config = birdCamera.getCurrentConfig()
-                msize = (new_config["width"], new_config["height"])
-                
-                # Reconfigure camera
-                logger.info(
-                    f"Reconfiguring camera to {new_config['width']}x{new_config['height']} "
-                    f"at {new_config.get('framerate', 30)} FPS..."
-                )
-                configure_camera(new_config)
-
-                # Restart camera
-                picam2.start()
-                apply_runtime_camera_settings(new_config)
-                logger.info("Camera reconfigured and restarted")
-                
-                # Update config reference
-                config.update(new_config)
-                
-                # Clear the flag
-                reconfigure_camera.clear()
-                
-                # Reset counters to trigger stream restart
-                dead_ticks = 0
-                down_ticks = 0
-                up_ticks = 0
-            
             up = _rtsp_up(host, port)
             with encoder_lock:
                 if streaming["running"]:
@@ -392,17 +380,20 @@ def runCamera():
             time.sleep(10)
 
     # Start camera and manager; encoder will start when RTSP is reachable
-    picam2.start()
+    with camera_lock:
+        picam2.start()
     apply_runtime_camera_settings(config)
     threading.Thread(target=stream_manager, daemon=True).start()
 
     w, h = lsize
 
-    prev = picam2.capture_buffer("lores")
+    with camera_lock:
+        prev = picam2.capture_buffer("lores")
     prev = prev[:w * h].reshape(h, w).astype(np.int16)
 
     bwMode = False # greyscale mode on/off
-    picam2.set_controls({"Saturation": 1.0})
+    with camera_lock:
+        picam2.set_controls({"Saturation": 1.0})
 
     currBrightness = 0
     skipNFrames = 10 # skip the first frames to avoid recording on startup
@@ -435,12 +426,9 @@ def runCamera():
                         f"vflip={new_config.get('vflip', 0)}"
                     )
 
-                # Signal stream manager to handle the reconfiguration
-                reconfigure_camera.set()
-                # Wait a bit for the camera to be restarted
-                time.sleep(2)
-                # Reset preview buffer after reconfiguration
-                prev = picam2.capture_buffer("lores")
+                reconfigure_camera_pipeline(new_config)
+                with camera_lock:
+                    prev = picam2.capture_buffer("lores")
                 prev = prev[:w * h].reshape(h, w).astype(np.int16)
                 skipNFrames = new_config["skippedFramesAfterChange"]
                 
@@ -451,20 +439,21 @@ def runCamera():
                   config.get("autofocus", False) != new_config.get("autofocus", False) or
                   config.get("framerate", 30) != new_config.get("framerate", 30)):
                 try:
-                    if new_config.get("awbEnable", False):
-                        # Enable AWB, don't set manual color gains
-                        picam2.set_controls({"AwbEnable": True})
-                        logger.info("Enabled auto white balance")
-                    else:
-                        # Disable AWB and set manual color gains
-                        picam2.set_controls({
-                            "AwbEnable": False,
-                            "ColourGains": (
-                                new_config["colorOffset_red"], 
-                                new_config["colorOffset_blue"]
-                            )
-                        })
-                        logger.info("Disabled AWB and set manual color gains")
+                    with camera_lock:
+                        if new_config.get("awbEnable", False):
+                            # Enable AWB, don't set manual color gains
+                            picam2.set_controls({"AwbEnable": True})
+                            logger.info("Enabled auto white balance")
+                        else:
+                            # Disable AWB and set manual color gains
+                            picam2.set_controls({
+                                "AwbEnable": False,
+                                "ColourGains": (
+                                    new_config["colorOffset_red"], 
+                                    new_config["colorOffset_blue"]
+                                )
+                            })
+                            logger.info("Disabled AWB and set manual color gains")
 
                     apply_runtime_camera_settings(new_config)
                     config.update(new_config)
@@ -480,7 +469,8 @@ def runCamera():
             logger.info(f"Configuration updated: {config}")
             
         # capture new preview and reshape
-        cur = picam2.capture_buffer("lores")
+        with camera_lock:
+            cur = picam2.capture_buffer("lores")
         cur = cur[:w * h].reshape(h, w).astype(np.float32)
         #calculate current brightness
         currBrightness = np.square(cur).mean()
@@ -495,13 +485,15 @@ def runCamera():
             # switch mode in case brightness reached threshold, then skip some frames
             if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
                 logger.info("switching mode to color")
-                picam2.set_controls({"Saturation": 1.0})
+                with camera_lock:
+                    picam2.set_controls({"Saturation": 1.0})
                 bwMode = False
                 skipNFrames = config["skippedFramesAfterChange"]
 
             elif not bwMode and currBrightness < config["bwSwitchingSensitivity"]:
                 logger.info("switching mode to greyscale")
-                picam2.set_controls({"Saturation": 0.0})
+                with camera_lock:
+                    picam2.set_controls({"Saturation": 0.0})
                 bwMode = True
                 skipNFrames = config["skippedFramesAfterChange"]
 
