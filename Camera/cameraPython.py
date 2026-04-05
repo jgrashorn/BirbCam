@@ -23,39 +23,94 @@ def _rtsp_up(host, port, timeout=1.0):
     except OSError:
         return False
 
-def _detect_audio_available():
-    """Detect if PulseAudio is available and responding."""
+def _detect_audio_source(preferred_source=None):
+    """Return a usable PulseAudio capture source name, or None if no physical mic is available."""
     try:
-        # Check if PulseAudio socket exists
         pulse_socket = os.environ.get('PULSE_SERVER', '/run/user/1000/pulse/native')
-        if pulse_socket.startswith('/'):
-            if not os.path.exists(pulse_socket):
-                logger.info("PulseAudio socket not found, disabling audio")
-                return False
-        
-        # Try to query PulseAudio
-        result = subprocess.run(
+        if pulse_socket.startswith('/') and not os.path.exists(pulse_socket):
+            logger.info("PulseAudio socket not found, disabling audio")
+            return None
+
+        info_result = subprocess.run(
             ['pactl', 'info'],
             capture_output=True,
-            timeout=2
+            text=True,
+            timeout=2,
         )
-        
-        if result.returncode == 0:
-            logger.info("PulseAudio detected and responding")
-            return True
-        else:
+        if info_result.returncode != 0:
             logger.info("PulseAudio not responding, disabling audio")
-            return False
-            
+            return None
+
+        default_source = None
+        default_result = subprocess.run(
+            ['pactl', 'get-default-source'],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if default_result.returncode == 0:
+            default_source = default_result.stdout.strip()
+
+        sources_result = subprocess.run(
+            ['pactl', 'list', 'short', 'sources'],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if sources_result.returncode != 0:
+            logger.info("Could not list PulseAudio sources, disabling audio")
+            return None
+
+        sources = []
+        for line in sources_result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                sources.append({
+                    "name": parts[1].strip(),
+                    "state": parts[-1].strip(),
+                })
+
+        physical_sources = [
+            source for source in sources
+            if not source["name"].endswith(".monitor")
+            and "monitor" not in source["name"].lower()
+        ]
+
+        if preferred_source:
+            for source in physical_sources:
+                if source["name"] == preferred_source:
+                    logger.info(f"Using configured audio source: {preferred_source} ({source['state']})")
+                    return preferred_source
+            logger.warning(
+                f"Configured audio source '{preferred_source}' not found; falling back to auto-detection"
+            )
+
+        if default_source:
+            for source in physical_sources:
+                if source["name"] == default_source:
+                    logger.info(f"Using default PulseAudio source: {default_source} ({source['state']})")
+                    return default_source
+
+        if physical_sources:
+            fallback = physical_sources[0]
+            logger.info(f"Using detected audio source: {fallback['name']} ({fallback['state']})")
+            return fallback["name"]
+
+        logger.info(
+            f"No physical PulseAudio input sources found (available sources: {[s['name'] for s in sources]}), "
+            "disabling audio"
+        )
+        return None
+
     except FileNotFoundError:
         logger.info("pactl command not found, disabling audio")
-        return False
+        return None
     except subprocess.TimeoutExpired:
         logger.info("PulseAudio query timeout, disabling audio")
-        return False
+        return None
     except Exception as e:
-        logger.warning(f"Audio detection failed: {e}, disabling audio")
-        return False
+        logger.warning(f"Audio source detection failed: {e}, disabling audio")
+        return None
 
 def runCamera():
 
@@ -360,14 +415,27 @@ def runCamera():
                     enable_sps_framerate=True,
                 )
 
-            # Detect audio availability
-            audio_available = _detect_audio_available()
+            # Detect actual microphone availability (not just whether PulseAudio is running)
+            audio_enabled = bool(config.get("audioEnabled", True))
+            configured_audio_source = config.get("audioDevice") or None
+            audio_source = _detect_audio_source(configured_audio_source) if audio_enabled else None
+            audio_available = audio_source is not None
             audio_delay = float(config.get("audioDelay", -0.3) or 0.0)
+            audio_filter = config.get("audioFilter", "aresample=async=1:first_pts=0") or None
+
+            if not audio_enabled:
+                logger.info("Audio explicitly disabled in config")
+            elif audio_available:
+                logger.info(f"Audio enabled using source: {audio_source}")
+            else:
+                logger.info("No usable microphone source detected; starting stream without audio")
 
             out = FfmpegOutput(
                 f' -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 -flush_packets 1 -muxdelay 0 -muxpreload 0 -f rtsp -rtsp_transport tcp {rtsp_url}',
                 audio=audio_available,
+                audio_device=audio_source or "default",
                 audio_sync=audio_delay,
+                audio_filter=audio_filter if audio_available else None,
             )
             out.error_callback = _on_stream_output_error
             # Start encoder with output
@@ -392,7 +460,8 @@ def runCamera():
 
             logger.info(
                 f"Encoder started with nominal framerate={getattr(enc, 'framerate', None)}, "
-                f"audio={audio_available}, audio_sync={audio_delay}"
+                f"audio={audio_available}, audio_source={audio_source}, audio_sync={audio_delay}, "
+                f"audio_filter={audio_filter if audio_available else None}"
             )
 
             encoder = enc
