@@ -19,6 +19,12 @@ if [[ "$CURRENT_UID" -eq 0 ]]; then
     exit 1
 fi
 
+# ── Prerequisites ──────────────────────────────────────────────────────────────
+echo ""
+echo "▶ Installing system packages (ffmpeg, pulseaudio, python3-venv)..."
+sudo apt-get update -qq
+sudo apt-get install -y git ffmpeg pulseaudio python3-venv
+
 # ── Repository setup ───────────────────────────────────────────────────────────
 REPO_URL="https://github.com/jgrashorn/BirbCam.git"
 INSTALL_BASE="${HOME}/BirbCam"
@@ -75,10 +81,6 @@ read -rp "Choice [1]: " PICAM_CHOICE
 PICAM_CHOICE="${PICAM_CHOICE:-1}"
 
 # ── System packages ────────────────────────────────────────────────────────────
-echo ""
-echo "▶ Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y git ffmpeg pulseaudio python3-venv
 
 if [[ "$PICAM_CHOICE" == "2" ]]; then
     sudo apt-get install -y python3-picamera2
