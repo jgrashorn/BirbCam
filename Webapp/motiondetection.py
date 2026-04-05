@@ -38,7 +38,6 @@ STABLE_MIN_AGE       = config.stable_min_age
 STABLE_POLL_SECONDS  = config.stable_poll_seconds
 MAX_AGE_MIN          = config.max_age_minutes
 EVENT_RETENTION_DAYS = config.event_retention_days
-DRY_RUN              = config.dry_run
 LOG_LEVEL            = config.log_level
 
 # ---------- LOGGING ----------
@@ -151,9 +150,6 @@ def _run_ffmpeg_trim(src: Path, start: float, end: float, dst: Path) -> bool:
     if dur <= 0.05:
         logger.debug(f"[trim] skip tiny clip {dur:.3f}s from {src.name}")
         return False
-    if DRY_RUN:
-        logger.info(f"[trim] DRY {src.name} [{start:.3f},{end:.3f}] -> {dst.name}")
-        return True
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
            "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(src),
@@ -177,9 +173,6 @@ def _run_ffmpeg_trim(src: Path, start: float, end: float, dst: Path) -> bool:
     return ok
 
 def _ffmpeg_concat(parts: List[Path], dst: Path) -> bool:
-    if DRY_RUN:
-        logger.info(f"[concat] DRY {len(parts)} parts -> {dst.name}")
-        return True
     lst = dst.with_suffix(".txt")
     dst.parent.mkdir(parents=True, exist_ok=True)
     with lst.open("w") as f:
