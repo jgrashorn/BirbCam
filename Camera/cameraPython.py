@@ -67,6 +67,7 @@ def _detect_audio_source(preferred_source=None):
             if len(parts) >= 2:
                 sources.append({
                     "name": parts[1].strip(),
+                    "driver": parts[2].strip() if len(parts) >= 3 else "",
                     "state": parts[-1].strip(),
                 })
 
@@ -90,6 +91,13 @@ def _detect_audio_source(preferred_source=None):
                 if source["name"] == default_source:
                     logger.info(f"Using default PulseAudio source: {default_source} ({source['state']})")
                     return default_source
+
+        preferred_keywords = ("usb", "mic", "input")
+        for source in physical_sources:
+            driver_text = f"{source.get('driver', '')} {source['name']}".lower()
+            if any(keyword in driver_text for keyword in preferred_keywords):
+                logger.info(f"Using preferred audio source: {source['name']} ({source['state']})")
+                return source["name"]
 
         if physical_sources:
             fallback = physical_sources[0]
@@ -421,7 +429,10 @@ def runCamera():
             audio_source = _detect_audio_source(configured_audio_source) if audio_enabled else None
             audio_available = audio_source is not None
             audio_delay = float(config.get("audioDelay", -0.3) or 0.0)
-            audio_filter = config.get("audioFilter", "aresample=async=1:first_pts=0") or None
+            audio_samplerate = int(config.get("audioSampleRate", 16000) or 16000)
+            audio_bitrate = int(config.get("audioBitrate", 32000) or 32000)
+            audio_codec = config.get("audioCodec", "aac") or "aac"
+            audio_filter = config.get("audioFilter", "aresample=async=1:min_hard_comp=0.100:first_pts=0") or None
 
             if not audio_enabled:
                 logger.info("Audio explicitly disabled in config")
@@ -435,6 +446,9 @@ def runCamera():
                 audio=audio_available,
                 audio_device=audio_source or "default",
                 audio_sync=audio_delay,
+                audio_samplerate=audio_samplerate,
+                audio_codec=audio_codec,
+                audio_bitrate=audio_bitrate,
                 audio_filter=audio_filter if audio_available else None,
             )
             out.error_callback = _on_stream_output_error
@@ -461,7 +475,8 @@ def runCamera():
             logger.info(
                 f"Encoder started with nominal framerate={getattr(enc, 'framerate', None)}, "
                 f"audio={audio_available}, audio_source={audio_source}, audio_sync={audio_delay}, "
-                f"audio_filter={audio_filter if audio_available else None}"
+                f"audio_samplerate={audio_samplerate}, audio_bitrate={audio_bitrate}, "
+                f"audio_codec={audio_codec}, audio_filter={audio_filter if audio_available else None}"
             )
 
             encoder = enc
