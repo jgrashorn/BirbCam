@@ -1,9 +1,11 @@
 import time
 import os
 import logging
+import json
 import socket
 import threading
 import subprocess
+import urllib.request
 
 import numpy as np
 
@@ -370,6 +372,34 @@ def runCamera():
         logger.warning(f"RTSP output error from PyAV: {error}")
         stream_restart_requested.set()
 
+    def _send_motion_event(start_t: float, end_t: float):
+        """POST a motion event to the webapp. Runs in a daemon thread to avoid blocking the camera loop."""
+        cam_name = server_config["name"]
+        server_ip = server_config["serverIP"]
+        webapp_port = server_config.get("webappPort", 5000)
+
+        def _post():
+            try:
+                url = f"http://{server_ip}:{webapp_port}/api/motion_event"
+                payload = json.dumps({
+                    "camera": cam_name,
+                    "start": start_t,
+                    "end": end_t,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    logger.info(
+                        f"Motion event sent: camera={cam_name}, "
+                        f"start={start_t:.3f}, end={end_t:.3f}, status={resp.status}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to post motion event: {e}")
+
+        threading.Thread(target=_post, daemon=True).start()
+
     def start_stream():
         nonlocal encoder, streamOutput, rtsp_url
         try:
@@ -586,7 +616,12 @@ def runCamera():
 
     with camera_lock:
         prev = picam2.capture_buffer("lores")
-    prev = prev[:w * h].reshape(h, w).astype(np.int16)
+    prev = prev[:w * h].reshape(h, w).astype(np.float32)
+
+    # Motion detection state
+    motion_active = False
+    motion_start_time = 0.0
+    last_motion_time = 0.0
 
     bwMode = False # greyscale mode on/off
     with camera_lock:
@@ -626,7 +661,7 @@ def runCamera():
                 reconfigure_camera_pipeline(new_config)
                 with camera_lock:
                     prev = picam2.capture_buffer("lores")
-                prev = prev[:w * h].reshape(h, w).astype(np.int16)
+                prev = prev[:w * h].reshape(h, w).astype(np.float32)
                 skipNFrames = new_config["skippedFramesAfterChange"]
                 
             # Update color gains or AWB if they changed (and resolution didn't)
@@ -694,6 +729,24 @@ def runCamera():
                 bwMode = True
                 skipNFrames = config["skippedFramesAfterChange"]
 
+            # Motion detection: diff current lores frame against previous
+            if config.get("motionEnabled", True):
+                diff = np.abs(cur - prev)
+                changed = int(np.count_nonzero(diff > config.get("motionThreshold", 10)))
+                now = time.time()
+                if changed >= config.get("motionMinPixels", 500):
+                    last_motion_time = now
+                    if not motion_active:
+                        motion_active = True
+                        motion_start_time = now
+                        logger.info(f"Motion started ({changed} pixels changed)")
+                elif motion_active and (now - last_motion_time) >= config.get("motionCooldown", 3.0):
+                    motion_active = False
+                    logger.info(
+                        f"Motion ended: duration={last_motion_time - motion_start_time:.1f}s, "
+                        f"sending event to server"
+                    )
+                    _send_motion_event(motion_start_time, last_motion_time)
         prev = cur # overwrite previous frame with current one
 
 if __name__ == "__main__":

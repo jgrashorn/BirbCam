@@ -2,5 +2,6 @@
     "serverIP": "192.168.178.36",
     "name": "Garten",
     "rtspPort": 8554,
-    "settingsPort": 5005
+    "settingsPort": 5005,
+    "webappPort": 5000
 }

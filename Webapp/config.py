@@ -140,6 +140,16 @@ class BirbCamConfig:
         """If motion starts within N seconds of video start, consider for joining."""
         return float(os.environ.get("BIRBCAM_HEAD_NEAR_START", "1.0"))
     
+    @property
+    def max_event_duration(self) -> float:
+        """Maximum duration (seconds) of a single motion event clip."""
+        return float(os.environ.get("BIRBCAM_MAX_EVENT_DURATION", "120"))
+
+    @property
+    def event_retention_days(self) -> int:
+        """Number of days to retain motion event records."""
+        return int(os.environ.get("BIRBCAM_EVENT_RETENTION_DAYS", "7"))
+    
     # ========================================================================
     # Performance Optimization
     # ========================================================================

@@ -71,6 +71,9 @@ RTSP_PORT="${RTSP_PORT:-8554}"
 read -rp "Settings port [5005]: " SETTINGS_PORT
 SETTINGS_PORT="${SETTINGS_PORT:-5005}"
 
+read -rp "Webapp port [5000]: " WEBAPP_PORT
+WEBAPP_PORT="${WEBAPP_PORT:-5000}"
+
 echo ""
 
 # ── picamera2 install mode ─────────────────────────────────────────────────────
@@ -107,7 +110,8 @@ cat > "$CAM_DIR/server_settings.txt" <<EOF
     "serverIP": "$SERVER_IP",
     "name": "$CAMERA_NAME",
     "rtspPort": $RTSP_PORT,
-    "settingsPort": $SETTINGS_PORT
+    "settingsPort": $SETTINGS_PORT,
+    "webappPort": $WEBAPP_PORT
 }
 EOF
 

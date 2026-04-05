@@ -4,6 +4,7 @@
     "clrSwitchingSensitivity": 0,
     "skippedFramesAfterChange": 50,
     "framerate": 30,
+    
     "audioEnabled": true,
     "audioDelay": 0.0,
     "audioDevice": "",
@@ -11,11 +12,20 @@
     "audioBitrate": 32000,
     "audioCodec": "aac",
     "audioFilter": "aresample=async=1:min_hard_comp=0.100:first_pts=0",
+
     "colorOffset_red": 1.0,
     "colorOffset_blue": 1.0,
+
     "encoderType": "h264",
+
     "width": 1920,
     "height": 1080,
+
     "hflip": false,
-    "vflip": false
+    "vflip": false,
+
+    "motionEnabled": true,
+    "motionThreshold": 10,
+    "motionMinPixels": 500,
+    "motionCooldown": 3.0,
 }

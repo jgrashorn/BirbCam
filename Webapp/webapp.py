@@ -1,7 +1,9 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify, url_for, abort
-import os, time, subprocess, socket, json, shutil, hashlib
+import os, time, threading, subprocess, socket, json, shutil, hashlib
 from pathlib import Path
 import camera_settings
+import fcntl
+from contextlib import contextmanager
 
 # Load environment variables from .env file if it exists
 def load_env_file():
@@ -647,6 +649,90 @@ def api_toggle_motion_detection(cam_name):
         
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# ---------------------------------------------------------------------------
+# Motion event handling
+# ---------------------------------------------------------------------------
+
+_EVENTS_LOCK = threading.Lock()
+_EVENTS_DIR  = Path(__file__).parent
+
+
+def _events_path(cam: str) -> Path:
+    return _EVENTS_DIR / f".motion_events_{cam}.json"
+
+
+def _events_lock_path(cam: str) -> Path:
+    return _EVENTS_DIR / f".motion_events_{cam}.lock"
+
+
+@contextmanager
+def _events_flock(cam: str):
+    lp = _events_lock_path(cam)
+    with open(lp, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _load_events(cam: str) -> list:
+    p = _events_path(cam)
+    if not p.exists():
+        return []
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_events(cam: str, events: list) -> None:
+    with open(_events_path(cam), "w") as f:
+        json.dump(events, f, indent=2)
+
+
+@app.route('/api/motion_event', methods=['POST'])
+def api_motion_event():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"status": "error", "message": "Missing JSON body"}), 400
+
+    cam     = data.get("camera")
+    start_t = data.get("start")
+    end_t   = data.get("end")
+
+    if not cam or not isinstance(start_t, (int, float)) or not isinstance(end_t, (int, float)):
+        return jsonify({"status": "error", "message": "camera, start, end required"}), 400
+
+    if cam not in cameras:
+        return jsonify({"status": "error", "message": f"Unknown camera: {cam}"}), 404
+
+    start_t = float(start_t)
+    end_t   = float(end_t)
+
+    if end_t - start_t > config.max_event_duration:
+        end_t = start_t + config.max_event_duration
+
+    event = {
+        "camera":    cam,
+        "start":     start_t,
+        "end":       end_t,
+        "received":  time.time(),
+        "processed": False,
+        "clip":      None,
+    }
+
+    with _EVENTS_LOCK:
+        with _events_flock(cam):
+            events = _load_events(cam)
+            events.append(event)
+            idx = len(events) - 1
+            _save_events(cam, events)
+
+    return jsonify({"status": "ok", "event_index": idx})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
