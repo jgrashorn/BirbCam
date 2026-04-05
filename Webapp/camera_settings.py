@@ -239,6 +239,11 @@ def get_settings_metadata_for_camera(camera_name):
         config['width'] = int(config['width'])
     if 'height' in config:
         config['height'] = int(config['height'])
+
+    # Ensure colour offsets are always floats so the UI renders a decimal step input
+    for _key in ('colorOffset_red', 'colorOffset_blue'):
+        if _key in config:
+            config[_key] = float(config[_key])
     
     # Infer camera type from config
     camera_type = infer_camera_type_from_config(config)
