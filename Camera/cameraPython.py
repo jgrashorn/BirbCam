@@ -161,7 +161,7 @@ def runCamera():
         model = picam2.camera_properties["Model"]
 
         if "imx477" in model: # Raspberry Pi HQ Camera
-            return "RGB8888"
+            return "YUV420"
         elif "imx708" in model: # Raspberry Pi Camera Module v3 (all variants)
             return "YUV420"
         else:
@@ -267,10 +267,10 @@ def runCamera():
 
         try:
             return picam2.create_video_configuration(**create_kwargs)
-        except TypeError as e:
+        except Exception as e:
             if "sensor" in create_kwargs:
                 logger.warning(
-                    f"Sensor pinning unsupported by this Picamera2 build ({e}); using default mode selection"
+                    f"Sensor pinning failed ({type(e).__name__}: {e}); retrying without sensor pin"
                 )
                 create_kwargs.pop("sensor", None)
                 return picam2.create_video_configuration(**create_kwargs)
@@ -356,12 +356,19 @@ def runCamera():
         config.update(new_config)
         logger.info("Camera reconfigured and restarted")
 
-    configure_camera(config)
+    try:
+        configure_camera(config)
+    except Exception as e:
+        logger.critical(f"Fatal error during initial camera configuration: {e}", exc_info=True)
+        raise
 
-    min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
-    min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
-    logger.info(f"ExposureTime range: {min_exp} - {max_exp}, default: {default_exp}")
-    logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
+    try:
+        min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
+        min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
+        logger.info(f"ExposureTime range: {min_exp} - {max_exp}, default: {default_exp}")
+        logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
+    except Exception as e:
+        logger.warning(f"Could not read camera control ranges: {e}")
 
     # --- self-healing RTSP publisher ---
     rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
