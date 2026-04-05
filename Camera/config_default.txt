@@ -4,7 +4,7 @@
     "clrSwitchingSensitivity": 0,
     "skippedFramesAfterChange": 50,
     "framerate": 30,
-    
+
     "audioEnabled": true,
     "audioDelay": 0.0,
     "audioDevice": "",
@@ -27,5 +27,5 @@
     "motionEnabled": true,
     "motionThreshold": 10,
     "motionMinPixels": 500,
-    "motionCooldown": 3.0,
+    "motionCooldown": 3.0
 }
