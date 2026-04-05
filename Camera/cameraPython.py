@@ -89,7 +89,9 @@ def runCamera():
     preferred_sensor = None
 
     props = picam2.camera_properties
+    sensor_modes = list(getattr(picam2, "sensor_modes", []) or [])
     logger.info(f"camera properties: {props}")
+    logger.info(f"available sensor modes: {sensor_modes}")
 
     def choose_main_format(picam2):
         model = picam2.camera_properties["Model"]
@@ -115,6 +117,55 @@ def runCamera():
         frame_duration_us = int(1_000_000 / framerate)
         return (frame_duration_us, frame_duration_us)
 
+    def choose_sensor_config(camera_config):
+        requested_w = int(camera_config["width"])
+        requested_h = int(camera_config["height"])
+        requested_fps = float(camera_config.get("framerate", 30) or 30)
+
+        ranked_modes = []
+        for mode in sensor_modes:
+            size = tuple(mode.get("size") or ())
+            if len(size) != 2:
+                continue
+
+            fps = float(mode.get("fps", 0) or 0)
+            fits_size = size[0] >= requested_w and size[1] >= requested_h
+            fits_fps = fps >= (requested_fps - 0.5)
+            score = (
+                0 if fits_size else 1,
+                0 if fits_fps else 1,
+                -fps,
+                size[0] * size[1],
+                -int(mode.get("bit_depth", 0) or 0),
+            )
+            ranked_modes.append((score, mode))
+
+        if not ranked_modes:
+            logger.warning("No sensor modes reported; falling back to automatic mode selection")
+            return None
+
+        chosen = min(ranked_modes, key=lambda item: item[0])[1]
+        chosen_size = tuple(chosen.get("size") or ())
+        if len(chosen_size) != 2:
+            return None
+
+        if chosen_size[0] < requested_w or chosen_size[1] < requested_h:
+            logger.warning(
+                f"No sensor mode fully covers {requested_w}x{requested_h}; using automatic mode selection"
+            )
+            return None
+
+        sensor_config = {"output_size": chosen_size}
+        bit_depth = chosen.get("bit_depth")
+        if bit_depth is not None:
+            sensor_config["bit_depth"] = int(bit_depth)
+
+        logger.info(
+            f"Selected sensor mode for {requested_w}x{requested_h} @ {requested_fps} FPS: "
+            f"size={chosen_size}, fps={chosen.get('fps')}, bit_depth={chosen.get('bit_depth')}"
+        )
+        return sensor_config
+
     def build_video_config(camera_config):
         controls = {
             "FrameDurationLimits": build_frame_duration_limits(camera_config),
@@ -136,19 +187,19 @@ def runCamera():
             "transform": build_transform(camera_config),
         }
 
-        pinned_sensor = preferred_sensor
-        if pinned_sensor:
-            output_size = pinned_sensor.get("output_size") or pinned_sensor.get("size")
+        selected_sensor = choose_sensor_config(camera_config) or preferred_sensor
+        if selected_sensor:
+            output_size = selected_sensor.get("output_size") or selected_sensor.get("size")
             if output_size and (
                 output_size[0] < camera_config["width"] or
                 output_size[1] < camera_config["height"]
             ):
                 logger.info(
-                    "Requested resolution exceeds pinned sensor mode; allowing libcamera to reselect"
+                    "Requested resolution exceeds selected sensor mode; allowing libcamera to reselect"
                 )
             else:
-                create_kwargs["sensor"] = pinned_sensor
-                logger.info(f"Reusing pinned sensor configuration: {pinned_sensor}")
+                create_kwargs["sensor"] = selected_sensor
+                logger.info(f"Using explicit sensor configuration: {selected_sensor}")
 
         try:
             return picam2.create_video_configuration(**create_kwargs)
@@ -198,6 +249,24 @@ def runCamera():
             f"hflip={camera_config.get('hflip', 0)}, vflip={camera_config.get('vflip', 0)}"
         )
 
+    def log_camera_timing(context):
+        try:
+            with camera_lock:
+                metadata = picam2.capture_metadata()
+
+            frame_duration = metadata.get("FrameDuration")
+            approx_fps = (1_000_000 / frame_duration) if frame_duration else None
+            logger.info(
+                f"{context} metadata: FrameDuration={frame_duration}, "
+                f"approx_fps={approx_fps:.2f} "
+                f"ExposureTime={metadata.get('ExposureTime')}, "
+                f"AnalogueGain={metadata.get('AnalogueGain')}, "
+                f"AeLocked={metadata.get('AeLocked')}"
+                if approx_fps is not None else f"{context} metadata: {metadata}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to read camera metadata after reconfiguration: {e}")
+
     def reconfigure_camera_pipeline(new_config):
         logger.info(
             f"Synchronously rebuilding camera pipeline for {new_config['width']}x{new_config['height']} "
@@ -218,6 +287,7 @@ def runCamera():
                 picam2.start()
 
             apply_runtime_camera_settings(new_config)
+            log_camera_timing("Post-reconfigure")
 
         config.update(new_config)
         logger.info("Camera reconfigured and restarted")
@@ -263,29 +333,36 @@ def runCamera():
         nonlocal encoder, streamOutput, rtsp_url
         try:
             logger.info(f"Starting RTSP encoder/output to {rtsp_url}")
-            
-            # Choose encoder based on config
-            encoder_type = config.get("encoderType", "h264").lower()
 
-            logger.info(f"Selected encoder type: {encoder_type}")
-            
+            target_fps = max(float(config.get("framerate", 30) or 30), 1.0)
+            encoder_type = config.get("encoderType", "h264").lower()
+            logger.info(f"Selected encoder type: {encoder_type}, target FPS: {target_fps}")
+
             if encoder_type == "mjpeg":
                 logger.info("Using MJPEG encoder")
                 enc = MJPEGEncoder()
-            else:
-                logger.info("Using H264 encoder")
-                enc = H264Encoder(2000000)
                 try:
-                    enc.intra_period = 48  # friendlier for HLS recovery (best-effort)
+                    enc.framerate = target_fps
                 except Exception:
                     pass
-            
+            else:
+                logger.info("Using H264 encoder")
+                enc = H264Encoder(
+                    2000000,
+                    repeat=True,
+                    iperiod=max(int(target_fps * 2), 1),
+                    framerate=target_fps,
+                    enable_sps_framerate=True,
+                )
+
             # Detect audio availability
             audio_available = _detect_audio_available()
-            
+            audio_delay = float(config.get("audioDelay", -0.3) or 0.0)
+
             out = FfmpegOutput(
-                f' -use_wallclock_as_timestamps 1 -f rtsp -rtsp_transport tcp {rtsp_url}',
-                audio=audio_available
+                f' -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 -f rtsp -rtsp_transport tcp {rtsp_url}',
+                audio=audio_available,
+                audio_sync=audio_delay,
             )
             # Start encoder with output
             with camera_lock:
@@ -307,9 +384,16 @@ def runCamera():
             else:
                 logger.warning("ffmpeg pid not found (debounced monitor will verify liveness)")
 
+            logger.info(
+                f"Encoder started with nominal framerate={getattr(enc, 'framerate', None)}, "
+                f"audio={audio_available}, audio_sync={audio_delay}"
+            )
+
             encoder = enc
             streamOutput = out
             streaming["running"] = True
+
+            log_camera_timing("After stream start")
         except Exception as e:
             logger.error(f"Failed to start stream: {e}", exc_info=True)
             streaming["running"] = False
@@ -416,6 +500,7 @@ def runCamera():
     with camera_lock:
         picam2.start()
     apply_runtime_camera_settings(config)
+    log_camera_timing("Initial startup")
     threading.Thread(target=stream_manager, daemon=True).start()
 
     w, h = lsize
