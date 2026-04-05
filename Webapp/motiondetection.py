@@ -251,32 +251,48 @@ def process_once():
 
         logger.info(f"[{cam}] merged into {len(groups)} group(s)")
 
+        # Build file catalog once for all groups
+        cam_dir = CAMERA_DIR(cam)
+        if not cam_dir.exists():
+            logger.warning(f"[{cam}] camera dir missing: {cam_dir}")
+            continue
+
+        file_catalog = []
+        now = time.time()
+        for mp4 in sorted(cam_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime):
+            if MAX_AGE_MIN is not None:
+                if (now - mp4.stat().st_mtime) > MAX_AGE_MIN * 60:
+                    continue
+            dur = ffprobe_duration(mp4)
+            if dur <= 0:
+                continue
+            f_end   = mp4.stat().st_mtime
+            f_start = f_end - dur
+            file_catalog.append((mp4, f_start, dur))
+
+        logger.info(f"[{cam}] catalogued {len(file_catalog)} source file(s)")
+
         for merged_start, merged_end, idxs in groups:
             clip_start = merged_start - PRE_BUFFER
             clip_end   = merged_end   + POST_BUFFER
 
-            # Find overlapping MP4 source files
-            cam_dir = CAMERA_DIR(cam)
-            if not cam_dir.exists():
-                logger.warning(f"[{cam}] camera dir missing: {cam_dir}")
-                continue
-
-            candidates = []
-            for mp4 in sorted(cam_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime):
-                if MAX_AGE_MIN is not None:
-                    if (time.time() - mp4.stat().st_mtime) > MAX_AGE_MIN * 60:
-                        continue
-                dur = ffprobe_duration(mp4)
-                if dur <= 0:
-                    continue
-                f_end   = mp4.stat().st_mtime
-                f_start = f_end - dur
-                if clip_start < f_end and clip_end > f_start:
-                    candidates.append((mp4, f_start, dur))
+            candidates = [
+                (mp4, f_start, dur)
+                for mp4, f_start, dur in file_catalog
+                if clip_start < (f_start + dur) and clip_end > f_start
+            ]
 
             if not candidates:
                 logger.info(f"[{cam}] no source files for group at "
-                            f"{time.strftime('%H:%M:%S', time.localtime(merged_start))}, skipping")
+                            f"{time.strftime('%H:%M:%S', time.localtime(merged_start))}"
+                            f" — marking as expired")
+                with _events_flock(cam):
+                    events = _load_events(cam)
+                    for i in idxs:
+                        if i < len(events):
+                            events[i]["processed"] = True
+                            events[i]["clip"] = None
+                    _save_events(cam, events)
                 continue
 
             # Skip group if any needed file isn't stable yet — retry next run
@@ -285,7 +301,7 @@ def process_once():
                 logger.info(f"[{cam}] files not yet stable: {', '.join(unstable)} — will retry next run")
                 continue
 
-            # Claim events before processing (prevents webapp from double-processing)
+            # Claim events before processing
             with _events_flock(cam):
                 events = _load_events(cam)
                 for i in idxs:
