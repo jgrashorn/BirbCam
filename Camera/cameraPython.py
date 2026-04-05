@@ -141,7 +141,6 @@ def runCamera():
     birdCamera.startSettingsServer(settings_port)
     
     lsize = (180, 120) # size of internal preview for motion detection (smol bc fast)
-    msize = (config["width"], config["height"]) # size of recording from config.txt
     picam2 = Picamera2()
 
     encoder_lock = threading.Lock()
@@ -157,17 +156,9 @@ def runCamera():
     logger.info(f"camera properties: {props}")
     logger.info(f"available sensor modes: {sensor_modes}")
 
-    def choose_main_format(picam2):
-        model = picam2.camera_properties["Model"]
-
-        if "imx477" in model: # Raspberry Pi HQ Camera
-            return "YUV420"
-        elif "imx708" in model: # Raspberry Pi Camera Module v3 (all variants)
-            return "YUV420"
-        else:
-            return "YUV420"  # prefer YUV for most cameras
-
-    MAIN_FORMAT = choose_main_format(picam2)
+    # All current supported sensors (imx477, imx708) use YUV420 natively;
+    # update this if a future sensor requires a different format.
+    MAIN_FORMAT = "YUV420"
     logger.info(f"choosing {MAIN_FORMAT}")
 
     def build_transform(camera_config):
@@ -295,8 +286,7 @@ def runCamera():
             logger.error(f"Failed to apply autofocus settings: {e}")
 
     def configure_camera(camera_config):
-        nonlocal msize, preferred_sensor
-        msize = (camera_config["width"], camera_config["height"])
+        nonlocal preferred_sensor
         video_config = build_video_config(camera_config)
         with camera_lock:
             picam2.configure(video_config)
@@ -309,7 +299,7 @@ def runCamera():
 
         logger.info(f"Active camera configuration: {active_config}")
         logger.info(
-            f"Configured camera: {msize[0]}x{msize[1]} @ {camera_config.get('framerate', 30)} FPS, "
+            f"Configured camera: {camera_config['width']}x{camera_config['height']} @ {camera_config.get('framerate', 30)} FPS, "
             f"hflip={camera_config.get('hflip', 0)}, vflip={camera_config.get('vflip', 0)}"
         )
 
@@ -446,14 +436,11 @@ def runCamera():
             out.error_callback = _on_stream_output_error
 
             # Start encoder with output
+            # Fallback for older picamera2 builds that don't accept output as an argument
             with camera_lock:
                 try:
-                    Picamera2.start_encoder  # probe existence
                     picam2.start_encoder(enc, out)
                 except TypeError:
-                    enc.output = out
-                    picam2.start_encoder()
-                except AttributeError:
                     enc.output = out
                     picam2.start_encoder()
 
@@ -505,7 +492,7 @@ def runCamera():
             logger.info("RTSP encoder/output stopped")
 
     def stream_manager():
-        nonlocal rtsp_url, server_config, config, msize
+        nonlocal rtsp_url, server_config, config
         host = server_config["serverIP"]
         port = server_config["rtspPort"]
         dead_ticks = 0
@@ -517,7 +504,7 @@ def runCamera():
         
         while True:
             if stream_restart_requested.is_set():
-                logger.warning("Immediate RTSP restart requested after ffmpeg output failure")
+                logger.warning("Immediate RTSP restart requested after PyAV output failure")
                 with encoder_lock:
                     if streaming["running"]:
                         stop_stream()

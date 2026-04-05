@@ -218,26 +218,13 @@ def create_preprocessed_video(video_path: Path) -> Path:
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-i", str(video_path),
-        
-        # Video filters: scale down, convert to grayscale, and apply slight blur
-        "-vf", f"scale={RESIZE_W}:-2,format=gray,gblur=sigma=1",
-        
-        # Sampling: only process every Nth frame based on SAMPLE_FPS
-        "-r", str(SAMPLE_FPS),
-        
-        # Fast encoding settings for temporary file
-        "-c:v", "libx264", 
-        "-preset", "ultrafast",  # Fastest encoding
-        "-crf", "35",            # Higher CRF for smaller file (quality doesn't matter much)
-        "-tune", "fastdecode",   # Optimize for fast decoding
-        
-        # No audio needed for motion detection
+        "-vf", f"fps={SAMPLE_FPS},scale={RESIZE_W}:-2,format=gray",
+        "-c:v", "mjpeg",
+        "-q:v", "10",
         "-an",
-        
-        # Overwrite output
         "-y", str(temp_path)
     ]
-    
+
     logger.debug(f"[preprocess] Creating low-res version: {video_path.name} -> {temp_path.name}")
     
     rc = subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -280,7 +267,7 @@ def cleanup_old_temp_files():
     cleaned = 0
     
     try:
-        for temp_file in TEMP_DIR.glob("motion_*.mp4"):
+        for temp_file in TEMP_DIR.glob("motion_*.avi"):
             try:
                 # Remove files older than 1 hour or very small files (failed processing)
                 age = time.time() - temp_file.stat().st_mtime
