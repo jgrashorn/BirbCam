@@ -86,6 +86,7 @@ def runCamera():
     encoder = None
     streamOutput = None
     streaming = {"running": False}
+    stream_restart_requested = threading.Event()
     preferred_sensor = None
 
     props = picam2.camera_properties
@@ -329,6 +330,10 @@ def runCamera():
     def _ffmpeg_dead() -> bool:
         return _find_ffmpeg_pid(rtsp_url) is None
 
+    def _on_stream_output_error(error):
+        logger.warning(f"RTSP output error from ffmpeg: {error}")
+        stream_restart_requested.set()
+
     def start_stream():
         nonlocal encoder, streamOutput, rtsp_url
         try:
@@ -360,10 +365,11 @@ def runCamera():
             audio_delay = float(config.get("audioDelay", -0.3) or 0.0)
 
             out = FfmpegOutput(
-                f' -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 -f rtsp -rtsp_transport tcp {rtsp_url}',
+                f' -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 -flush_packets 1 -muxdelay 0 -muxpreload 0 -f rtsp -rtsp_transport tcp {rtsp_url}',
                 audio=audio_available,
                 audio_sync=audio_delay,
             )
+            out.error_callback = _on_stream_output_error
             # Start encoder with output
             with camera_lock:
                 try:
@@ -430,11 +436,22 @@ def runCamera():
         dead_ticks = 0
         down_ticks = 0
         up_ticks = 0
-        DEAD_THRESH = 3   # require 3 consecutive misses (~30s) before restart
+        DEAD_THRESH = 3   # require 3 consecutive misses (~3s) before restart
         DOWN_THRESH = 3   # require 3 consecutive connect failures before stop
         UP_THRESH = 2     # require 2 consecutive successes before start
         
         while True:
+            if stream_restart_requested.is_set():
+                logger.warning("Immediate RTSP restart requested after ffmpeg output failure")
+                with encoder_lock:
+                    if streaming["running"]:
+                        stop_stream()
+                    if _rtsp_up(host, port):
+                        start_stream()
+                stream_restart_requested.clear()
+                dead_ticks = 0
+                down_ticks = 0
+                up_ticks = 0
             # Check for server configuration changes
             if birdCamera.waitForServerConfigChange(timeout=0.1):
                 logger.info("Server configuration changed, reloading...")
@@ -494,7 +511,7 @@ def runCamera():
                     else:
                         up_ticks = 0
             
-            time.sleep(10)
+            time.sleep(1)
 
     # Start camera and manager; encoder will start when RTSP is reachable
     with camera_lock:
