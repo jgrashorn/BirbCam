@@ -9,7 +9,7 @@ import numpy as np
 
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder, MJPEGEncoder
-from picamera2.outputs import FfmpegOutput
+from picamera2.outputs import PyavOutput
 
 import libcamera
 import birdCamera
@@ -161,7 +161,7 @@ def runCamera():
         model = picam2.camera_properties["Model"]
 
         if "imx477" in model: # Raspberry Pi HQ Camera
-            return "RGB8888"
+            return "YUV420"
         elif "imx708" in model: # Raspberry Pi Camera Module v3 (all variants)
             return "YUV420"
         else:
@@ -267,10 +267,10 @@ def runCamera():
 
         try:
             return picam2.create_video_configuration(**create_kwargs)
-        except TypeError as e:
+        except Exception as e:
             if "sensor" in create_kwargs:
                 logger.warning(
-                    f"Sensor pinning unsupported by this Picamera2 build ({e}); using default mode selection"
+                    f"Sensor pinning failed ({type(e).__name__}: {e}); retrying without sensor pin"
                 )
                 create_kwargs.pop("sensor", None)
                 return picam2.create_video_configuration(**create_kwargs)
@@ -356,45 +356,28 @@ def runCamera():
         config.update(new_config)
         logger.info("Camera reconfigured and restarted")
 
-    configure_camera(config)
+    try:
+        configure_camera(config)
+    except Exception as e:
+        logger.critical(f"Fatal error during initial camera configuration: {e}", exc_info=True)
+        raise
 
-    min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
-    min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
-    logger.info(f"ExposureTime range: {min_exp} - {max_exp}, default: {default_exp}")
-    logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
+    try:
+        min_exp, max_exp, default_exp = picam2.camera_controls["ExposureTime"]
+        min_frameduration, max_frameduration, default_frameduration = picam2.camera_controls["FrameDurationLimits"]
+        logger.info(f"ExposureTime range: {min_exp} - {max_exp}, default: {default_exp}")
+        logger.info(f"FrameDurationLimits range: {min_frameduration} - {max_frameduration}, default: {default_frameduration}")
+    except Exception as e:
+        logger.warning(f"Could not read camera control ranges: {e}")
 
     # --- self-healing RTSP publisher ---
     rtsp_url = f'rtsp://{server_config["serverIP"]}:{server_config["rtspPort"]}/{server_config["name"]}'
 
-    # Replace pgrep with a /proc scan (more reliable, no shell)
-    def _find_ffmpeg_pid(target_url: str):
-        try:
-            for pid in os.listdir("/proc"):
-                if not pid.isdigit():
-                    continue
-                try:
-                    with open(f"/proc/{pid}/cmdline", "rb") as f:
-                        raw = f.read()
-                    if not raw:
-                        continue
-                    parts = raw.split(b"\x00")
-                    exe = parts[0].decode("utf-8", "ignore")
-                    if "ffmpeg" not in exe:
-                        continue
-                    cmd = " ".join(p.decode("utf-8", "ignore") for p in parts if p)
-                    if target_url in cmd:
-                        return int(pid)
-                except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
-                    continue
-        except Exception:
-            pass
-        return None
-
-    def _ffmpeg_dead() -> bool:
-        return _find_ffmpeg_pid(rtsp_url) is None
+    def _stream_output_dead() -> bool:
+        return bool(streamOutput is not None and getattr(streamOutput, "_container", None) is None)
 
     def _on_stream_output_error(error):
-        logger.warning(f"RTSP output error from ffmpeg: {error}")
+        logger.warning(f"RTSP output error from PyAV: {error}")
         stream_restart_requested.set()
 
     def start_stream():
@@ -428,30 +411,40 @@ def runCamera():
             configured_audio_source = config.get("audioDevice") or None
             audio_source = _detect_audio_source(configured_audio_source) if audio_enabled else None
             audio_available = audio_source is not None
-            audio_delay = float(config.get("audioDelay", -0.3) or 0.0)
+            audio_delay = float(config.get("audioDelay", 0.0) or 0.0)
             audio_samplerate = int(config.get("audioSampleRate", 16000) or 16000)
             audio_bitrate = int(config.get("audioBitrate", 32000) or 32000)
             audio_codec = config.get("audioCodec", "aac") or "aac"
-            audio_filter = config.get("audioFilter", "aresample=async=1:min_hard_comp=0.100:first_pts=0") or None
+            audio_filter = config.get("audioFilter", "") or ""
 
-            if not audio_enabled:
-                logger.info("Audio explicitly disabled in config")
-            elif audio_available:
+            enc.audio = audio_available
+            if audio_available:
+                enc.audio_input = {
+                    "file": audio_source,
+                    "format": "pulse",
+                }
+                enc.audio_output = {
+                    "codec_name": audio_codec,
+                    "rate": audio_samplerate,
+                    "bit_rate": audio_bitrate,
+                }
+                enc.audio_sync = int(audio_delay * 1_000_000)
                 logger.info(f"Audio enabled using source: {audio_source}")
+                if audio_filter:
+                    logger.info("`audioFilter` is ignored with `PyavOutput`; PyAV handles audio muxing directly")
+            elif not audio_enabled:
+                logger.info("Audio explicitly disabled in config")
             else:
                 logger.info("No usable microphone source detected; starting stream without audio")
 
-            out = FfmpegOutput(
-                f' -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 -flush_packets 1 -muxdelay 0 -muxpreload 0 -f rtsp -rtsp_transport tcp {rtsp_url}',
-                audio=audio_available,
-                audio_device=audio_source or "default",
-                audio_sync=audio_delay,
-                audio_samplerate=audio_samplerate,
-                audio_codec=audio_codec,
-                audio_bitrate=audio_bitrate,
-                audio_filter=audio_filter if audio_available else None,
-            )
+            output_options = {
+                "rtsp_transport": "tcp",
+                "muxdelay": "0.0",
+                "muxpreload": "0.0",
+            }
+            out = PyavOutput(rtsp_url, format="rtsp", options=output_options)
             out.error_callback = _on_stream_output_error
+
             # Start encoder with output
             with camera_lock:
                 try:
@@ -464,19 +457,17 @@ def runCamera():
                     enc.output = out
                     picam2.start_encoder()
 
-            # give ffmpeg a moment to spawn, then locate pid
-            time.sleep(0.5)
-            pid = _find_ffmpeg_pid(rtsp_url)
-            if pid:
-                logger.info(f"ffmpeg pid={pid} started")
-            else:
-                logger.warning("ffmpeg pid not found (debounced monitor will verify liveness)")
+            try:
+                if hasattr(enc, "force_key_frame"):
+                    enc.force_key_frame()
+            except Exception:
+                pass
 
             logger.info(
-                f"Encoder started with nominal framerate={getattr(enc, 'framerate', None)}, "
-                f"audio={audio_available}, audio_source={audio_source}, audio_sync={audio_delay}, "
+                f"PyAV output started with nominal framerate={getattr(enc, 'framerate', None)}, "
+                f"audio={audio_available}, audio_source={audio_source}, audio_sync_s={audio_delay}, "
                 f"audio_samplerate={audio_samplerate}, audio_bitrate={audio_bitrate}, "
-                f"audio_codec={audio_codec}, audio_filter={audio_filter if audio_available else None}"
+                f"audio_codec={audio_codec}, rtsp_options={output_options}"
             )
 
             encoder = enc
@@ -569,10 +560,10 @@ def runCamera():
             up = _rtsp_up(host, port)
             with encoder_lock:
                 if streaming["running"]:
-                    if _ffmpeg_dead():
+                    if _stream_output_dead():
                         dead_ticks += 1
                         if dead_ticks >= DEAD_THRESH:
-                            logger.warning("ffmpeg missing for %d checks; restarting stream", dead_ticks)
+                            logger.warning("PyAV output closed for %d checks; restarting stream", dead_ticks)
                             stop_stream()
                             dead_ticks = 0
                     else:
