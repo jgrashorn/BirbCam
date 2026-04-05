@@ -712,6 +712,9 @@ def api_motion_event():
     start_t = float(start_t)
     end_t   = float(end_t)
 
+    if end_t - start_t < config.min_event_duration:
+        return jsonify({"status": "ok", "event_index": -1})  # silently discard
+
     if end_t - start_t > config.max_event_duration:
         end_t = start_t + config.max_event_duration
 

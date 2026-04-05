@@ -309,7 +309,7 @@ def process_once():
                         events[i]["claimed"] = True
                 _save_events(cam, events)
 
-            stamp    = time.strftime("%Y%m%d_%H%M%S", time.localtime(merged_start))
+            stamp    = time.strftime("%Y-%m-%d_%H%M%S", time.localtime(merged_start))
             day      = time.strftime("%Y-%m-%d",       time.localtime(merged_start))
             out_dir  = OUTPUT_DIR(cam) / day
             out_dir.mkdir(parents=True, exist_ok=True)
