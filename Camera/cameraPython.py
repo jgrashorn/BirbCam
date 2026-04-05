@@ -86,6 +86,7 @@ def runCamera():
     encoder = None
     streamOutput = None
     streaming = {"running": False}
+    preferred_sensor = None
 
     props = picam2.camera_properties
     logger.info(f"camera properties: {props}")
@@ -128,13 +129,37 @@ def runCamera():
                 camera_config["colorOffset_blue"],
             )
 
-        video_config = picam2.create_video_configuration(
-            main={"size": (camera_config["width"], camera_config["height"]), "format": MAIN_FORMAT},
-            lores={"size": lsize, "format": "YUV420"},
-            controls=controls,
-        )
-        video_config["transform"] = build_transform(camera_config)
-        return video_config
+        create_kwargs = {
+            "main": {"size": (camera_config["width"], camera_config["height"]), "format": MAIN_FORMAT},
+            "lores": {"size": lsize, "format": "YUV420"},
+            "controls": controls,
+            "transform": build_transform(camera_config),
+        }
+
+        pinned_sensor = preferred_sensor
+        if pinned_sensor:
+            output_size = pinned_sensor.get("output_size") or pinned_sensor.get("size")
+            if output_size and (
+                output_size[0] < camera_config["width"] or
+                output_size[1] < camera_config["height"]
+            ):
+                logger.info(
+                    "Requested resolution exceeds pinned sensor mode; allowing libcamera to reselect"
+                )
+            else:
+                create_kwargs["sensor"] = pinned_sensor
+                logger.info(f"Reusing pinned sensor configuration: {pinned_sensor}")
+
+        try:
+            return picam2.create_video_configuration(**create_kwargs)
+        except TypeError as e:
+            if "sensor" in create_kwargs:
+                logger.warning(
+                    f"Sensor pinning unsupported by this Picamera2 build ({e}); using default mode selection"
+                )
+                create_kwargs.pop("sensor", None)
+                return picam2.create_video_configuration(**create_kwargs)
+            raise
 
     def apply_runtime_camera_settings(camera_config):
         try:
@@ -155,11 +180,19 @@ def runCamera():
             logger.error(f"Failed to apply autofocus settings: {e}")
 
     def configure_camera(camera_config):
-        nonlocal msize
+        nonlocal msize, preferred_sensor
         msize = (camera_config["width"], camera_config["height"])
         video_config = build_video_config(camera_config)
         with camera_lock:
             picam2.configure(video_config)
+            active_config = picam2.camera_configuration()
+
+        sensor_config = active_config.get("sensor") if isinstance(active_config, dict) else None
+        if sensor_config:
+            preferred_sensor = dict(sensor_config)
+            logger.info(f"Pinned active sensor configuration for future rebuilds: {preferred_sensor}")
+
+        logger.info(f"Active camera configuration: {active_config}")
         logger.info(
             f"Configured camera: {msize[0]}x{msize[1]} @ {camera_config.get('framerate', 30)} FPS, "
             f"hflip={camera_config.get('hflip', 0)}, vflip={camera_config.get('vflip', 0)}"
