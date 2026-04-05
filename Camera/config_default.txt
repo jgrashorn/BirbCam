@@ -27,5 +27,7 @@
     "motionEnabled": true,
     "motionThreshold": 10,
     "motionMinPixels": 500,
-    "motionCooldown": 3.0
+    "motionCooldown": 3.0,
+
+    "motionCheckInterval": 5
 }

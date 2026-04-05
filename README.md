@@ -56,6 +56,18 @@ sudo -u <user> XDG_RUNTIME_DIR=/run/user/<userid> systemctl --user enable --now 
 
 `<userid>` is the user's ID (`id -u <user>`)
 
+# wifi power mode
+
+Just to be safe and because I had the issue that the Pi Zero randomly drops the Wifi, turn off power saving mode:
+
+`sudo iwconfig wlan0 power off`
+
+Check with
+
+`iwconfig wlan0`
+
+`Power Management` should be `off`
+
 # Server
 
 ## Dependencies

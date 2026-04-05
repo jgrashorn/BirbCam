@@ -603,7 +603,7 @@ def runCamera():
                     else:
                         up_ticks = 0
             
-            time.sleep(1)
+            time.sleep(5)
 
     # Start camera and manager; encoder will start when RTSP is reachable
     with camera_lock:
@@ -622,6 +622,7 @@ def runCamera():
     motion_active = False
     motion_start_time = 0.0
     last_motion_time = 0.0
+    _motion_check_counter = 0
 
     bwMode = False # greyscale mode on/off
     with camera_lock:
@@ -700,20 +701,26 @@ def runCamera():
             
             logger.info(f"Configuration updated: {config}")
             
-        # capture new preview and reshape
+        # capture new preview
         with camera_lock:
             cur = picam2.capture_buffer("lores")
-        cur = cur[:w * h].reshape(h, w).astype(np.float32)
-        #calculate current brightness
-        currBrightness = np.square(cur).mean()
 
         # logger.info(f"Image: {cur}, Current brightness: {currBrightness}, bwMode: {bwMode}, skipNFrames: {skipNFrames}")
 
+        _motion_check_counter += 1
         # skip some frames, e.g. if mode was changed
         if skipNFrames > 0: 
             skipNFrames -= 1
+            prev = cur[:w * h].reshape(h, w).astype(np.float32)
+            _motion_check_counter = 0
 
-        else:
+        elif _motion_check_counter >= config.get("motionCheckInterval", 5):
+            _motion_check_counter = 0
+
+            cur = cur[:w * h].reshape(h, w).astype(np.float32)
+            #calculate current brightness
+            currBrightness = np.square(cur).mean()
+
             # switch mode in case brightness reached threshold, then skip some frames
             if bwMode and currBrightness > config["clrSwitchingSensitivity"]:
                 logger.info("switching mode to color")
@@ -747,7 +754,8 @@ def runCamera():
                         f"sending event to server"
                     )
                     _send_motion_event(motion_start_time, last_motion_time)
-        prev = cur # overwrite previous frame with current one
+
+            prev = cur # overwrite previous frame with current one
 
 if __name__ == "__main__":
     runCamera()
